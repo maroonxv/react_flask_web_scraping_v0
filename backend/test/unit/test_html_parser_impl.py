@@ -197,7 +197,8 @@ class TestHtmlParserImpl:
         """
         # 注意：直接测试私有方法在 Python 中是允许的，有助于验证核心逻辑
         assert parser._normalize_url("http://example.com:80/path") == "http://example.com/path"
-        assert parser._normalize_url("HTTPS://EXAMPLE.COM/PATH?Q=1#fragment") == "https://example.com/path?q=1"
+        # URL 路径和查询参数通常是大小写敏感的，因此不应强制转换为小写
+        assert parser._normalize_url("HTTPS://EXAMPLE.COM/PATH?Q=1#fragment") == "https://example.com/PATH?Q=1"
         # 验证不支持的协议返回空字符串
         assert parser._normalize_url("ftp://example.com") == ""
 

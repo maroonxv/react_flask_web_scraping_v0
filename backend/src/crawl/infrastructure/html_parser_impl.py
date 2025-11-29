@@ -170,10 +170,18 @@ class HtmlParserImpl(IHtmlParser):
             if parsed.scheme not in ('http', 'https'):
                 return ""
             
+            # 去除默认端口
+            netloc = parsed.netloc.lower()
+            if ':' in netloc:
+                host, port = netloc.split(':', 1)
+                if (parsed.scheme == 'http' and port == '80') or \
+                   (parsed.scheme == 'https' and port == '443'):
+                    netloc = host
+            
             # 重构URL（去除fragment）
             normalized = urlunparse((
                 parsed.scheme.lower(),  # 协议小写
-                parsed.netloc.lower(),  # 域名小写
+                netloc,                 # 域名小写（已去除默认端口）
                 parsed.path,
                 parsed.params,
                 parsed.query,
