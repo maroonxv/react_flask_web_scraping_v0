@@ -67,8 +67,14 @@ class HttpClientImpl(IHttpClient):
             HttpResponse对象，包含响应信息或错误信息
         """
         try:
+            # 合并会话头和自定义头
+            request_headers = None
+            if headers:
+                request_headers = headers
+            
             response = self._session.get(
                 url,
+                headers=request_headers,
                 timeout=self._timeout,
                 allow_redirects=True  # 自动跟随重定向
             )

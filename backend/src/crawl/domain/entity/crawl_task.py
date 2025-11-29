@@ -29,10 +29,12 @@ class CrawlTask:
         self.config = config
         self.status = TaskStatus.PENDING
         self.results = []
-        self.logs = []
+ 
         self.created_at = datetime.datetime.now()
         self.updated_at = self.created_at
-        self.visited_urls = set()
+        self.url_queue = []
+        self._visited_urls = set()
+        self._life_cycle_events = []
 
 #-------------------   状态转换方法   -------------------
 
@@ -72,10 +74,6 @@ class CrawlTask:
         """将URL添加到队列，执行去重和robots.txt验证"""
         self.url_queue.append(url)
 
-    def mark_url_visited(self, url: str):
-        """标记URL为已访问"""
-        self.visited_urls.add(url)
-
 #-------------------   业务规则验证   -------------------
 
     def is_url_allowed(self, url: str) -> bool:
@@ -91,6 +89,11 @@ class CrawlTask:
     def is_url_visited(self, url: str) -> bool:
         """验证URL是否已被访问"""
         return url in self._visited_urls
+
+    @property
+    def visited_urls(self) -> Set[str]:
+        """获取已访问URL集合"""
+        return self._visited_urls
 
 
 

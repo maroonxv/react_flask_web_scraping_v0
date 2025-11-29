@@ -20,3 +20,9 @@ crawl的源码按照领域驱动开发的原则进行组织
 - views：视图层，负责处理HTTP请求和响应，与前端进行交互，相当于前后端的适配器
 
 前端使用React.js,实现用户界面的展示和交互。
+
+
+
+后端的测试已经写得比较完善了，有单元测试和集成测试。
+单元测试包括对于 infrastructure 层的 http_client_impl.py、html_parser_impl.py、robots_txt_parser_impl.py、url_queue_impl.py的测试
+集成测试包括

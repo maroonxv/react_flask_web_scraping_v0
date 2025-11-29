@@ -1,25 +1,32 @@
-
 class EventBus:
     """
-    事件总线 - 用于发布和订阅事件
+    事件总线 - 共享基础设施
+    不定义接口，直接实现（因为只有一个版本）
     """
-
-    def subscribe(self, event_type: str, handler):
-        """
-        订阅事件
+    
+    def __init__(self):
+        self._handlers: Dict[str, List[Callable]] = {}
+        self._logger = logging.getLogger(__name__)
+    
+    def subscribe(self, event_type: str, handler: Callable) -> None:
+        """订阅事件"""
+        if event_type not in self._handlers:
+            self._handlers[event_type] = []
         
-        参数:
-            event_type: 事件类型
-            handler: 事件处理函数
-        """
-        ...
-
-    def publish(self, event_type: str, event_data: dict):
-        """
-        发布事件
+        self._handlers[event_type].append(handler)
+        self._logger.debug(f"订阅事件: {event_type}")
+    
+    def publish(self, event) -> None:
+        """发布事件"""
+        handlers = self._handlers.get(event.event_type, [])
         
-        参数:
-            event_type: 事件类型
-            event_data: 事件数据
-        """
-        ...
+        for handler in handlers:
+            try:
+                handler(event)
+            except Exception as e:
+                self._logger.error(f"事件处理失败: {event.event_type} - {str(e)}")
+    
+    def unsubscribe(self, event_type: str, handler: Callable) -> None:
+        """取消订阅"""
+        if event_type in self._handlers:
+            self._handlers[event_type].remove(handler)

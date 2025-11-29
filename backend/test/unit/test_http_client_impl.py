@@ -107,6 +107,7 @@ class TestGetSuccess:
         
         mock_session.get.assert_called_once_with(
             "http://example.com",
+            headers=None,
             timeout=30,
             allow_redirects=True
         )
@@ -123,7 +124,13 @@ class TestGetSuccess:
         response = client.get("http://example.com", headers=custom_headers)
 
         assert response.is_success
-        # 验证 headers 参数被传递（具体实现取决于你的代码）
+        
+        mock_session.get.assert_called_once_with(
+            "http://example.com",
+            headers=custom_headers,
+            timeout=30,
+            allow_redirects=True
+        )
 
 
 # ============================================================================
