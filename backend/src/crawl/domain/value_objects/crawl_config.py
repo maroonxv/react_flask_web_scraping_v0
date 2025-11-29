@@ -1,6 +1,6 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List
-from app1.domain.value_objects.crawl_strategy import CrawlStrategy
+from crawl.domain.value_objects.crawl_strategy import CrawlStrategy
 
 @dataclass
 class CrawlConfig:

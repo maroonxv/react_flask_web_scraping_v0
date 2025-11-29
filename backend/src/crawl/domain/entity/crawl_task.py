@@ -1,10 +1,11 @@
-from dataclasses import dataclass
-from datetime import datetime
-from typing import List
-from app1.domain.value_objects.crawl_config import CrawlConfig
-from app1.domain.value_objects.crawl_status import TaskStatus
-from app1.domain.value_objects.crawl_result import CrawlResult
-from app1.domain.domain_event.task_life_cycle_event import BaseLifeCycleEvent
+from dataclasses import dataclass, field
+import datetime
+from typing import List, Set
+from urllib.parse import urlparse
+from crawl.domain.value_objects.crawl_config import CrawlConfig
+from crawl.domain.value_objects.crawl_status import TaskStatus
+from crawl.domain.value_objects.crawl_result import CrawlResult
+from crawl.domain.domain_event.task_life_cycle_event import BaseLifeCycleEvent
 
 @dataclass
 class CrawlTask:
@@ -19,7 +20,7 @@ class CrawlTask:
     updated_at: datetime.datetime = field(default_factory=datetime.datetime.now)
     url_queue: List[str] = field(default_factory=list)
 
-    _visited_urls: set = field(default_factory=set)
+    _visited_urls: Set[str] = field(default_factory=set)
     _life_cycle_events: List[BaseLifeCycleEvent] = field(default_factory=list)
 
 
@@ -79,18 +80,17 @@ class CrawlTask:
 
     def is_url_allowed(self, url: str) -> bool:
         """验证URL是否符合允许的域名规则"""
-        if not self.config.allowed_domains:
+        if not self.config.allow_domains:
             return True
         parsed_url = urlparse(url)
-        return any(domain in parsed_url.netloc for domain in self.config.allowed_domains)
+        return any(domain in parsed_url.netloc for domain in self.config.allow_domains)
 
     def mark_url_visited(self, url: str):
-        """记录URL为已访问 - 用于去重"""
         self._visited_urls.add(url)
 
     def is_url_visited(self, url: str) -> bool:
         """验证URL是否已被访问"""
-        return url in self.visited_urls
+        return url in self._visited_urls
 
 
 
