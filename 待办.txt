@@ -1,0 +1,8 @@
+正在开发事件处理机制，待办包括：
+1. 完善 EventBus 
+2. 完善 BaseEventHandler
+3. 完善基于事件处理机制的日志系统，包括两部分：
+    a. 将日志记录到日志文件中的 logging_handler
+    b. 将日志发往浏览器前端的 websocket_handler
+4. 在 test/unit 中撰写针对上述所有组件的单元测试
+5. 在 test/integration 中撰写融入了事件和日志机制的爬虫系统
