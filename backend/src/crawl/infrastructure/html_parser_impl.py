@@ -4,7 +4,7 @@ from urllib.parse import urljoin, urlparse, urlunparse
 from bs4 import BeautifulSoup
 import re
 
-from crawl.domain.demand_interface.i_html_parser import IHtmlParser
+from ..domain.demand_interface.i_html_parser import IHtmlParser
 
 
 class HtmlParserImpl(IHtmlParser):

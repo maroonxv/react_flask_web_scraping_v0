@@ -1,5 +1,5 @@
-from dataclasses import dataclass
 from abc import ABC, abstractmethod
+from ..value_objects.http_response import HttpResponse
 
 class IHttpClient(ABC):
     @abstractmethod

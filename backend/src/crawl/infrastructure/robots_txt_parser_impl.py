@@ -2,7 +2,7 @@
 from urllib.parse import urlparse, urljoin
 from urllib.robotparser import RobotFileParser
 from typing import Optional, Dict
-from crawl.domain.demand_interface.i_robots_txt_parser import IRobotsTxtParser
+from ..domain.demand_interface.i_robots_txt_parser import IRobotsTxtParser
 
 
 class RobotsTxtParserImpl(IRobotsTxtParser):

@@ -2,7 +2,8 @@
 from collections import deque
 import heapq
 from typing import Optional, List
-from crawl.domain.demand_interface.i_url_queue import IUrlQueue, QueuedUrl
+from ..domain.demand_interface.i_url_queue import IUrlQueue
+from ..domain.value_objects.queued_url import QueuedUrl
 
 
 class UrlQueueImpl(IUrlQueue):

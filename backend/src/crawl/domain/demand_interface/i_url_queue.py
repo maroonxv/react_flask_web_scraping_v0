@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import Optional
-from crawl.domain.value_objects.queued_url import QueuedUrl
+from ..value_objects.queued_url import QueuedUrl
 
 
 class IUrlQueue(ABC):

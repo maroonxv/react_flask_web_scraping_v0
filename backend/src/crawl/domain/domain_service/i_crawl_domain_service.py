@@ -1,11 +1,7 @@
-"""
-以下这些写在领域服务的原因：
-1. 无法归属单个实体: extract_page_metadata涉及HTML解析和业务规则，不属于CrawlTask
-2. 跨多个领域概念: is_url_crawlable需要协调robots.txt规则+任务配置+URL验证
-3. 使用领域语言: discover_pdf_links而非parse_html_for_pdfs
-4. 无状态: 所有方法都是纯函数，不维护内部状态​
-"""
-
+from abc import ABC, abstractmethod
+from typing import List
+from ..value_objects.page_metadata import PageMetadata
+from ..entity.crawl_task import CrawlTask
 
 
 class ICrawlDomainService(ABC):

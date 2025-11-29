@@ -2,21 +2,8 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from typing import Optional
-from dataclasses import dataclass
-
-from crawl.domain.demand_interface.i_http_client import IHttpClient
-
-
-@dataclass
-class HttpResponse:
-    """HTTP响应值对象"""
-    url: str
-    status_code: int
-    headers: dict
-    content: str
-    content_type: str
-    is_success: bool
-    error_message: Optional[str] = None
+from ..domain.demand_interface.i_http_client import IHttpClient
+from ..domain.value_objects.http_response import HttpResponse
 
 
 class HttpClientImpl(IHttpClient):
@@ -40,7 +27,8 @@ class HttpClientImpl(IHttpClient):
         """
         self._timeout = timeout
         self._session = requests.Session()
-        
+        self._max_retries = max_retries
+
         # 设置请求头
         self._session.headers.update({
             'User-Agent': user_agent,
@@ -54,20 +42,26 @@ class HttpClientImpl(IHttpClient):
         retry_strategy = Retry(
             total=max_retries,
             backoff_factor=retry_backoff,
-            status_forcelist=[429, 500, 502, 503, 504],  # 这些状态码自动重试
-            allowed_methods=["HEAD", "GET", "OPTIONS"]
+            status_forcelist=[429, 500, 502, 503, 504],
+            allowed_methods=["HEAD", "GET", "OPTIONS"],
+            raise_on_status=False,
+            # ✅ 关键：启用连接相关异常的重试
+            connect=max_retries,  # 连接失败重试次数
+            read=max_retries,     # 读取超时重试次数
+            redirect=5,           # 重定向次数
         )
         
         adapter = HTTPAdapter(max_retries=retry_strategy)
         self._session.mount("http://", adapter)
         self._session.mount("https://", adapter)
     
-    def get(self, url: str) -> HttpResponse:
+    def get(self, url: str, headers: Optional[dict] = None) -> HttpResponse:
         """
         执行HTTP GET请求
         
         参数:
             url: 目标URL
+            headers: 自定义请求头(可选)
             
         返回:
             HttpResponse对象，包含响应信息或错误信息
@@ -80,17 +74,22 @@ class HttpClientImpl(IHttpClient):
             )
             
             # 检测编码
-            encoding = response.encoding or 'utf-8'
-            if response.apparent_encoding:
+            encoding = response.encoding if response.encoding else 'utf-8'
+            if not response.encoding and response.apparent_encoding:
                 encoding = response.apparent_encoding
             
+            try:
+                content = response.content.decode(encoding, errors='ignore')
+            except (UnicodeDecodeError, LookupError):
+                content = response.content.decode('utf-8', errors='ignore')
+            
             return HttpResponse(
-                url=response.url,  # 重定向后的最终URL
+                url=response.url,
                 status_code=response.status_code,
                 headers=dict(response.headers),
-                content=response.content.decode(encoding, errors='ignore'),
+                content=content,
                 content_type=response.headers.get('Content-Type', ''),
-                is_success=response.status_code == 200,
+                is_success=response.ok,  # ✅ 使用 ok 属性（200-299）
                 error_message=None if response.ok else f"HTTP {response.status_code}"
             )
             
@@ -109,6 +108,11 @@ class HttpClientImpl(IHttpClient):
                 url, "重定向过多", "重定向次数超过限制"
             )
         
+        except requests.exceptions.HTTPError as e:  # ✅ 添加 HTTPError 专门处理
+            return self._create_error_response(
+                url, "HTTP错误", f"HTTP错误: {str(e)}"
+            )
+
         except requests.exceptions.RequestException as e:
             return self._create_error_response(
                 url, "请求异常", f"请求失败: {str(e)}"
@@ -132,7 +136,7 @@ class HttpClientImpl(IHttpClient):
         try:
             response = self._session.head(
                 url,
-                timeout=10,  # HEAD请求用较短超时
+                timeout=self._timeout,
                 allow_redirects=True
             )
             
@@ -142,7 +146,7 @@ class HttpClientImpl(IHttpClient):
                 headers=dict(response.headers),
                 content='',  # HEAD请求没有body
                 content_type=response.headers.get('Content-Type', ''),
-                is_success=response.status_code == 200,
+                is_success=response.ok,  # 包含所有200-299的状态码情况
                 error_message=None if response.ok else f"HTTP {response.status_code}"
             )
             

@@ -2,10 +2,10 @@ from dataclasses import dataclass, field
 import datetime
 from typing import List, Set
 from urllib.parse import urlparse
-from crawl.domain.value_objects.crawl_config import CrawlConfig
-from crawl.domain.value_objects.crawl_status import TaskStatus
-from crawl.domain.value_objects.crawl_result import CrawlResult
-from crawl.domain.domain_event.task_life_cycle_event import BaseLifeCycleEvent
+from ..value_objects.crawl_config import CrawlConfig
+from ..value_objects.crawl_status import TaskStatus
+from ..value_objects.crawl_result import CrawlResult
+from ..domain_event.task_life_cycle_event import BaseLifeCycleEvent
 
 @dataclass
 class CrawlTask:
