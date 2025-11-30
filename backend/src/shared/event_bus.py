@@ -1,3 +1,7 @@
+from typing import Dict, List, Callable
+import logging
+
+
 class EventBus:
     """
     事件总线 - 共享基础设施
@@ -22,6 +26,7 @@ class EventBus:
         
         for handler in handlers:
             try:
+                # 这里的handler是一个具体的事件处理函数，如LoggingEventHandler.handle
                 handler(event)
             except Exception as e:
                 self._logger.error(f"事件处理失败: {event.event_type} - {str(e)}")
