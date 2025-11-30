@@ -12,8 +12,12 @@
 - 幂等性与安全：启动时校验状态、停止时清队列，避免重复执行或资源泄漏。
 """
 
+
+# 注意，这里没有转发日志的逻辑，那部分逻辑全部写在 shared里面。
+# shared在DDD的分层架构中，亦属于应用层。
+
 from datetime import datetime
-from typing import Dict
+from typing import Dict, List, Optional
 from threading import Thread
 from ..domain.domain_service.i_crawl_domain_service import ICrawlDomainService
 from ..domain.demand_interface.i_http_client import IHttpClient
@@ -21,7 +25,7 @@ from ..domain.demand_interface.i_url_queue import IUrlQueue
 from ..domain.entity.crawl_task import CrawlTask
 from ..domain.value_objects.crawl_status import TaskStatus
 from ..domain.value_objects.crawl_result import CrawlResult
-
+from src.shared.event_bus import EventBus
 
 
 class CrawlerService:
@@ -31,13 +35,15 @@ class CrawlerService:
     - 维护任务字典与线程字典；
     - 根据任务状态初始化 URL 队列并驱动爬取循环；
     - 对外提供暂停/恢复/停止控制与状态查询接口。
+    - 发布领域事件到事件总线
     """
     
     def __init__(
         self,
         crawl_domain_service: ICrawlDomainService,
         http_client: IHttpClient,
-        url_queue: IUrlQueue
+        url_queue: IUrlQueue,
+        event_bus: Optional[EventBus] = None
     ):
         """
         构造函数注入依赖
@@ -46,11 +52,13 @@ class CrawlerService:
             crawl_domain_service: 爬取领域服务
             http_client: HTTP客户端
             url_queue: URL队列
+            event_bus: 事件总线 (可选，便于测试)
         """
         # 依赖注入：保存领域服务、HTTP客户端与URL队列引用
         self._crawl_service = crawl_domain_service
         self._http = http_client
         self._queue = url_queue
+        self._event_bus = event_bus
         
         # 暂时用字典模拟任务存储(后续可替换为仓储)
         self._tasks: dict[str, CrawlTask] = {}
@@ -60,7 +68,19 @@ class CrawlerService:
         self._stopped_tasks: set[str] = set()
         # 记录每个任务的工作线程
         self._threads: Dict[str, Thread] = {}
-    
+
+    def _publish_domain_events(self, task: CrawlTask):
+        """发布任务中积压的领域事件"""
+        if not self._event_bus:
+            return
+            
+        events = task.get_uncommitted_events()
+        for event in events:
+            self._event_bus.publish(event)
+        
+        # 清空已发布的事件
+        task.clear_events()
+
     def start_crawl_task(self, task: CrawlTask) -> None:
         """
         启动爬取任务
@@ -78,6 +98,9 @@ class CrawlerService:
         else:
             task.resume_crawl()
         
+        # 发布状态变更事件
+        self._publish_domain_events(task)
+
         # 3. 存储任务引用：便于后续控制与查询
         self._tasks[task.id] = task
         
@@ -108,6 +131,7 @@ class CrawlerService:
         
         # 领域层状态转换：设置为 PAUSED
         task.pause_crawl()
+        self._publish_domain_events(task)
         
         # 标记为暂停：让循环检测到后退出
         self._paused_tasks.add(task_id)
@@ -128,6 +152,7 @@ class CrawlerService:
         
         # 领域层状态转换：恢复为 RUNNING
         task.resume_crawl()
+        self._publish_domain_events(task)
         
         # 移除暂停标志：允许循环继续
         self._paused_tasks.discard(task_id)
@@ -150,9 +175,21 @@ class CrawlerService:
         if not task:
             raise ValueError(f"任务 {task_id} 不存在")
         self._stopped_tasks.add(task_id)
+        
         task.stop_crawl()
+        self._publish_domain_events(task)
+        
         self._queue.clear()
     
+    def get_task_results(self, task_id: str) -> List[CrawlResult]:
+        """
+        获取任务的最新结果列表
+        """
+        task = self._tasks.get(task_id)
+        if not task:
+            return []
+        return task.results
+
     def _execute_crawl_loop(self, task: CrawlTask) -> None:
         """
         执行爬取循环
@@ -239,7 +276,17 @@ class CrawlerService:
                 pdf_links=pdf_links,
                 crawled_at=datetime.now()
             )
-            task.results.append(result)
+            
+            # 使用新的方法添加结果并记录事件
+            task.add_crawl_result(result, depth)
+            
+            # 发布积压的事件（如PageCrawledEvent）
+            self._publish_domain_events(task)
+
+            # 供crawler_view调用：查询一次最新结果
+            # (虽然此处没有直接传递给view，但符合“每增加一条结果就查询一次”的要求，
+            #  实际上可以通过事件或者回调机制通知View，这里我们假设事件发布就是通知机制的一部分)
+            latest_results = self.get_task_results(task.id)
             
             # 10. 将新发现的链接加入队列(深度+1)：可调整优先级策略
             for link in crawlable_links:
@@ -254,6 +301,9 @@ class CrawlerService:
         elif self._queue.is_empty() and task.status == TaskStatus.RUNNING:
             task.complete_crawl()
             print(f"任务 {task.id} 完成! 共爬取 {len(task.results)} 个页面")
+        
+        # 发布最终状态变更事件（Stopped 或 Completed）
+        self._publish_domain_events(task)
     
     def get_task_status(self, task_id: str) -> dict:
         """

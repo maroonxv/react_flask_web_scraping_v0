@@ -6,7 +6,7 @@ scraping_app_v0\backend\src\shared\event_handlers\websocket_handler.py
 
 from flask_socketio import SocketIO
 from typing import Optional
-from .base_handler import BaseEventHandler
+from .base_event_handler import BaseEventHandler
 import logging
 
 class WebSocketEventHandler(BaseEventHandler):

@@ -24,7 +24,6 @@ class TestDailyRotatingFileHandler:
     def handler(self, log_dir):
         """Fixture: 提供一个 DailyRotatingFileHandler 实例"""
         # 确保目录不存在，以测试自动创建功能
-        # 注意：tmp_path 是存在的，但 log_dir (tmp_path/logs/error) 尚未创建
         suffix = "error.log"
         handler = DailyRotatingFileHandler(str(log_dir), suffix, backup_count=5)
         yield handler
@@ -49,14 +48,12 @@ class TestDailyRotatingFileHandler:
         fixed_date = datetime(2025, 1, 1)
         with patch('src.shared.handlers.logging_handler.datetime') as mock_datetime:
             mock_datetime.now.return_value = fixed_date
-            # datetime.now() is called in __init__
             
             handler = DailyRotatingFileHandler(str(log_dir), suffix)
             
             expected_name = log_dir / "2025-01-01_test_app.log"
             
             # 检查 handler 的 baseFilename 属性
-            # TimedRotatingFileHandler 将路径存储在 baseFilename 中
             assert Path(handler.baseFilename).resolve() == expected_name.resolve()
             
             handler.close()
@@ -67,8 +64,8 @@ class TestDailyRotatingFileHandler:
         # 我们希望它变成： /path/to/2025-11-29_error.log
         
         log_dir = Path(handler.baseFilename).parent
-        base_name = f"2025-11-30_{handler.file_name_suffix}" # 当前文件名
-        rotated_suffix = "2025-11-29" # 轮转附加的日期
+        base_name = f"2025-11-30_{handler.file_name_suffix}" 
+        rotated_suffix = "2025-11-29" 
         
         default_rotated_name = str(log_dir / f"{base_name}.{rotated_suffix}")
         

@@ -10,6 +10,7 @@ from ..domain_event.task_life_cycle_event import (
     TaskCreatedEvent, TaskStartedEvent, TaskPausedEvent, 
     TaskResumedEvent, TaskStoppedEvent, TaskCompletedEvent, TaskFailedEvent
 )
+from ..domain_event.crawl_process_event import PageCrawledEvent
 
 @dataclass
 class CrawlTask:
@@ -164,3 +165,18 @@ class CrawlTask:
     def visited_urls(self) -> Set[str]:
         """获取已访问URL集合"""
         return self._visited_urls
+
+    def add_crawl_result(self, result: CrawlResult, depth: int = 0):
+        """添加爬取结果并记录事件"""
+        self.results.append(result)
+        self.updated_at = datetime.datetime.now()
+        
+        # 记录页面爬取成功事件
+        self._record_event(PageCrawledEvent(
+            task_id=self.id,
+            url=result.url,
+            title=result.title,
+            depth=depth,
+            status_code=200, # 假设成功
+            pdf_count=len(result.pdf_links)
+        ))

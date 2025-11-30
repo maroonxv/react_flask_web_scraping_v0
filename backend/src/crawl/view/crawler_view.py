@@ -38,6 +38,12 @@ _queue = UrlQueueImpl()
 _domain_service = CrawlDomainServiceImpl(_http, _parser, _robots)
 _service = CrawlerService(_domain_service, _http, _queue)
 
+def inject_event_bus(event_bus):
+    """依赖注入：注入事件总线"""
+    # 这是一个临时的注入方法，用于在应用启动后将 EventBus 传递给 Service
+    # 更好的做法是使用依赖注入框架
+    _service._event_bus = event_bus
+
 @bp.route("/start", methods=["POST"])
 def start():
     # 启动爬取任务
@@ -101,3 +107,21 @@ def status(task_id: str):
     # - queue_size: 当前队列长度
     # - current_depth: 当前处理的队列深度
     return jsonify(_service.get_task_status(task_id))
+
+@bp.route("/results/<task_id>", methods=["GET"])
+def results(task_id: str):
+    """查询任务的最新结果列表"""
+    try:
+        results = _service.get_task_results(task_id)
+        # 将结果对象转换为字典列表
+        return jsonify([
+            {
+                "url": r.url,
+                "title": r.title,
+                "crawled_at": r.crawled_at.isoformat() if r.crawled_at else None,
+                "pdf_count": len(r.pdf_links)
+            } 
+            for r in results
+        ])
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400

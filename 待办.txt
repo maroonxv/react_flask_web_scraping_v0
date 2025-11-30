@@ -33,3 +33,12 @@
 5. 【性能与监控日志】(Performance & Monitoring) 
    - 速率控制触发情况（请求延迟、限流）
    - 队列状态（待爬取URL数量、队列深度）
+
+这个项目采用领域驱动设计的原则进行设计开发。
+我已经把这个项目的领域层和基础设施层都写好了，现在正在开发应用层。请你：
+1. 检查中CrawlerService对于领域层和基础设施层的调用是否正确
+2. CrawlerService作为应用层，将领域事件发布到总线上   
+3. 在CrawlerService中增加一个查询某个CrawlTask最新results的方法
+   然后在_execute_crawl_loop的每一轮循环中，每当results增加一条结果，
+   就查询一次（供crawler_view调用）
+   
