@@ -1,6 +1,7 @@
 
 from abc import ABC, abstractmethod
 from datetime import datetime
+from src.shared.domain.events import DomainEvent
 
 class BaseEventHandler(ABC):
     """
@@ -9,7 +10,7 @@ class BaseEventHandler(ABC):
     """
     
     @abstractmethod
-    def handle(self, event) -> None:
+    def handle(self, event: DomainEvent) -> None:
         """
         处理事件（子类必须实现）
         
@@ -18,7 +19,7 @@ class BaseEventHandler(ABC):
         """
         pass
     
-    def _format_event_to_log(self, event) -> dict:
+    def _format_event_to_log(self, event: DomainEvent) -> dict:
         """
         将领域事件转换为日志格式（通用方法）
         
@@ -40,7 +41,7 @@ class BaseEventHandler(ABC):
             "data": event.data
         }
     
-    def _get_message_and_level(self, event) -> tuple[str, str]:
+    def _get_message_and_level(self, event: DomainEvent) -> tuple[str, str]:
         """
         根据事件类型生成消息和日志级别
         
@@ -50,15 +51,52 @@ class BaseEventHandler(ABC):
         event_type = event.event_type
         data = event.data
         
-        # 根据事件类型定制消息
-        if event_type == "CRAWL_STARTED":
+        # --- 任务生命周期事件 (Task Life Cycle) ---
+        if event_type == "TaskCreatedEvent":
             return (
-                f"▶ 开始爬取: {data.get('start_url', 'N/A')} "
+                f"▶ 任务创建: {data.get('start_url', 'N/A')} "
                 f"[策略: {data.get('strategy', 'BFS')}, 最大深度: {data.get('max_depth', 3)}]",
                 "INFO"
             )
         
-        elif event_type == "PAGE_CRAWLED":
+        elif event_type == "TaskStartedEvent" or event_type == "CRAWL_STARTED":
+             return (
+                f"▶ 任务开始", 
+                "INFO"
+            )
+        
+        elif event_type == "TaskPausedEvent" or event_type == "CRAWL_PAUSED":
+            return (
+                f"⏸ 任务已暂停",
+                "WARNING"
+            )
+            
+        elif event_type == "TaskResumedEvent" or event_type == "CRAWL_RESUMED":
+            return (
+                f"▶ 任务已恢复",
+                "INFO"
+            )
+            
+        elif event_type == "TaskCompletedEvent" or event_type == "CRAWL_COMPLETED":
+            total_pages = data.get('total_pages', 0)
+            total_pdfs = data.get('total_pdfs', 0)
+            elapsed_time = data.get('elapsed_time', 0)
+            return (
+                f"✓ 爬取完成! 共爬取 {total_pages} 个页面, "
+                f"发现 {total_pdfs} 个PDF "
+                f"(耗时: {elapsed_time:.1f}秒)",
+                "SUCCESS"
+            )
+        
+        elif event_type == "TaskFailedEvent" or event_type == "CRAWL_STOPPED":
+             # 注意：CRAWL_STOPPED 在旧逻辑中是 Warning，TaskFailed 是 Error
+             if event_type == "TaskFailedEvent":
+                 return (f"✗ 任务失败: {data.get('error_message', '未知错误')}", "ERROR")
+             return (f"⏹ 任务已停止", "WARNING")
+
+        # --- 爬取过程事件 (Crawl Process) ---
+        
+        elif event_type == "PageCrawledEvent" or event_type == "PAGE_CRAWLED":
             title = data.get('title', '无标题')
             url = data.get('url', '')
             depth = data.get('depth', 0)
@@ -70,9 +108,9 @@ class BaseEventHandler(ABC):
                 "INFO"
             )
         
-        elif event_type == "PDF_FOUND":
+        elif event_type == "PdfFoundEvent" or event_type == "PDF_FOUND":
             pdf_urls = data.get('pdf_urls', [])
-            source_page = data.get('source_page', '')
+            source_page = data.get('source_page_url', data.get('source_page', ''))
             count = data.get('count', 0)
             
             # 只显示前3个PDF的文件名
@@ -85,7 +123,7 @@ class BaseEventHandler(ABC):
                 "SUCCESS"
             )
         
-        elif event_type == "CRAWL_ERROR":
+        elif event_type == "CrawlErrorEvent" or event_type == "CRAWL_ERROR":
             url = data.get('url', '')
             error_type = data.get('error_type', 'UNKNOWN')
             error_message = data.get('error_message', '')
@@ -96,36 +134,12 @@ class BaseEventHandler(ABC):
                 "ERROR"
             )
         
-        elif event_type == "CRAWL_COMPLETED":
-            total_pages = data.get('total_pages', 0)
-            total_pdfs = data.get('total_pdfs', 0)
-            elapsed_time = data.get('elapsed_time', 0)
+        elif event_type == "LinkFilteredEvent":
+            return (
+                f"∅ 链接过滤: {data.get('url')} ({data.get('reason')})",
+                "DEBUG"
+            )
             
-            return (
-                f"✓ 爬取完成! 共爬取 {total_pages} 个页面, "
-                f"发现 {total_pdfs} 个PDF "
-                f"(耗时: {elapsed_time:.1f}秒)",
-                "SUCCESS"
-            )
-        
-        elif event_type == "CRAWL_PAUSED":
-            return (
-                f"⏸ 任务已暂停",
-                "WARNING"
-            )
-        
-        elif event_type == "CRAWL_RESUMED":
-            return (
-                f"▶ 任务已恢复",
-                "INFO"
-            )
-        
-        elif event_type == "CRAWL_STOPPED":
-            return (
-                f"⏹ 任务已停止",
-                "WARNING"
-            )
-        
         else:
             # 未知事件类型
             return (
@@ -135,4 +149,6 @@ class BaseEventHandler(ABC):
     
     def _format_timestamp(self, timestamp: datetime) -> str:
         """格式化时间戳"""
+        if not isinstance(timestamp, datetime):
+             return str(timestamp)
         return timestamp.strftime('%Y-%m-%d %H:%M:%S')

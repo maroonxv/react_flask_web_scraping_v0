@@ -14,6 +14,8 @@
 import logging.config
 from pathlib import Path
 from datetime import datetime
+from typing import Optional
+from flask_socketio import SocketIO
 
 
 def setup_logging(socketio: Optional[SocketIO] = None):

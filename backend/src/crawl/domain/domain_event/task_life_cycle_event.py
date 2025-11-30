@@ -1,12 +1,9 @@
-from dataclasses import dataclass
-import datetime
-from dataclasses import field
-
-class BaseLifeCycleEvent:
-    task_id: str
+from dataclasses import dataclass, field
+from datetime import datetime
+from src.shared.domain.events import DomainEvent
 
 @dataclass
-class TaskCreatedEvent(BaseLifeCycleEvent):
+class TaskCreatedEvent(DomainEvent):
     start_url: str
     strategy: str
     max_depth: int
@@ -15,25 +12,24 @@ class TaskCreatedEvent(BaseLifeCycleEvent):
     allow_domains: list
 
 @dataclass
-class TaskStartedEvent(BaseLifeCycleEvent):
-    start_time: datetime.datetime = field(default_factory=datetime.datetime.now)
-
-
-@dataclass
-class TaskPausedEvent(BaseLifeCycleEvent):  
-    pause_time: datetime.datetime = field(default_factory=datetime.datetime.now)
-
+class TaskStartedEvent(DomainEvent):
+    pass
 
 @dataclass
-class TaskResumedEvent(BaseLifeCycleEvent):
-    resume_time: datetime.datetime = field(default_factory=datetime.datetime.now)
-
-
-@dataclass
-class TaskCompletedEvent(BaseLifeCycleEvent):
-    complete_time: datetime.datetime = field(default_factory=datetime.datetime.now)
-
+class TaskPausedEvent(DomainEvent):  
+    pass
 
 @dataclass
-class TaskFailedEvent(BaseLifeCycleEvent):
-    fail_time: datetime.datetime = field(default_factory=datetime.datetime.now)
+class TaskResumedEvent(DomainEvent):
+    pass
+
+@dataclass
+class TaskCompletedEvent(DomainEvent):
+    total_pages: int
+    total_pdfs: int
+    elapsed_time: float
+
+@dataclass
+class TaskFailedEvent(DomainEvent):
+    error_message: str
+    stack_trace: str = ""

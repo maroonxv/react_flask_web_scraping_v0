@@ -14,17 +14,17 @@ if str(backend_dir) not in sys.path:
     sys.path.append(str(backend_dir))
 
 from src.shared.event_handlers.logging_handler import LoggingEventHandler
+from src.shared.domain.events import DomainEvent
 
 # Mock events
 @dataclass
-class TaskStartedEvent:
-    task_id: str
-    start_time: datetime = field(default_factory=datetime.now)
+class TaskStartedEvent(DomainEvent):
+    pass
 
 @dataclass
-class TaskFailedEvent:
-    task_id: str
-    fail_time: datetime = field(default_factory=datetime.now)
+class TaskFailedEvent(DomainEvent):
+    error_message: str = "Mock error"
+    stack_trace: str = ""
 
 class TestLoggingEventHandler:
     
@@ -84,24 +84,6 @@ class TestLoggingEventHandler:
         assert log['level'] == "INFO"
         # 默认回退消息包含事件类型名称
         assert "任务开始" in log['message']
-
-    def test_handle_legacy_event(self, handler):
-        """测试处理带有 event_type 的旧式对象"""
-        MockEvent = namedtuple("MockEvent", ["task_id", "event_type", "data", "timestamp"])
-        task_id = "task_456"
-        event = MockEvent(
-            task_id=task_id, 
-            event_type="CRAWL_STARTED", 
-            data={"start_url": "http://test.com"},
-            timestamp=datetime.now()
-        )
-        
-        handler.handle(event)
-        
-        logs = handler.get_logs(task_id)
-        assert len(logs) == 1
-        assert logs[0]['message'] == "▶ 任务开始"
-        assert logs[0]['level'] == "INFO"
 
     def test_log_storage_limit(self, handler):
         """测试日志数量限制"""

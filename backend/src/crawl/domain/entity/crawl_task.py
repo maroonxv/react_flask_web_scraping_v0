@@ -5,7 +5,7 @@ from urllib.parse import urlparse
 from ..value_objects.crawl_config import CrawlConfig
 from ..value_objects.crawl_status import TaskStatus
 from ..value_objects.crawl_result import CrawlResult
-from ..domain_event.task_life_cycle_event import BaseLifeCycleEvent
+from src.shared.domain.events import DomainEvent
 
 @dataclass
 class CrawlTask:
@@ -21,7 +21,7 @@ class CrawlTask:
     url_queue: List[str] = field(default_factory=list)
 
     _visited_urls: Set[str] = field(default_factory=set)
-    _life_cycle_events: List[BaseLifeCycleEvent] = field(default_factory=list)
+    _life_cycle_events: List[DomainEvent] = field(default_factory=list)
 
 
     def __init__(self, id: str, config: CrawlConfig):
