@@ -10,7 +10,7 @@ from ..domain_event.task_life_cycle_event import (
     TaskCreatedEvent, TaskStartedEvent, TaskPausedEvent, 
     TaskResumedEvent, TaskStoppedEvent, TaskCompletedEvent, TaskFailedEvent
 )
-from ..domain_event.crawl_process_event import PageCrawledEvent
+from ..domain_event.crawl_process_event import PageCrawledEvent, CrawlErrorEvent
 
 @dataclass
 class CrawlTask:
@@ -179,4 +179,13 @@ class CrawlTask:
             depth=depth,
             status_code=200, # 假设成功
             pdf_count=len(result.pdf_links)
+        ))
+
+    def record_crawl_error(self, url: str, error_message: str, error_type: str = "GeneralError"):
+        """记录爬取错误"""
+        self._record_event(CrawlErrorEvent(
+            task_id=self.id,
+            url=url,
+            error_type=error_type,
+            error_message=error_message
         ))

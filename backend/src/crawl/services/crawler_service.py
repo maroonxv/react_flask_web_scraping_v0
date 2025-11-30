@@ -136,7 +136,6 @@ class CrawlerService:
         # 标记为暂停：让循环检测到后退出
         self._paused_tasks.add(task_id)
         
-        print(f"任务 {task_id} 已暂停，当前队列剩余 {self._queue.size()} 个URL")
     
     def resume_crawl_task(self, task_id: str) -> None:
         """
@@ -156,8 +155,6 @@ class CrawlerService:
         
         # 移除暂停标志：允许循环继续
         self._paused_tasks.discard(task_id)
-        
-        print(f"任务 {task_id} 已恢复，继续爬取...")
         
         # 继续爬取：重新开启线程进入循环
         t = Thread(target=self._execute_crawl_loop, args=(task,), daemon=True)
@@ -200,10 +197,8 @@ class CrawlerService:
         while not self._queue.is_empty():
             # 检查是否被暂停/停止：优先响应外部控制
             if task.id in self._stopped_tasks:
-                print(f"任务 {task.id} 检测到停止信号，结束爬取")
                 break
             if task.id in self._paused_tasks:
-                print(f"任务 {task.id} 检测到暂停信号，停止爬取")
                 break
             
             # 检查任务状态：确保仅在 RUNNING 期间工作
@@ -218,29 +213,29 @@ class CrawlerService:
             url = queued_url.url
             depth = queued_url.depth
             
-            print(f"正在爬取: {url} (深度: {depth}, 队列剩余: {self._queue.size()})")
-            
             # 2. 聚合根业务规则 - URL去重：避免重复请求
             if task.is_url_visited(url):
                 continue
             
             # 3. 聚合根业务规则 - 域名白名单：不在 allow_domains 列表则跳过
             if not task.is_url_allowed(url):
-                print(f"  ✗ URL不在允许的域名列表中: {url}")
+                task.record_crawl_error(url, "URL不在允许的域名列表中", "DomainNotAllowed")
+                self._publish_domain_events(task)
                 continue
             
             # 4. 执行HTTP请求：包含重试/编码检测/错误处理
             response = self._http.get(url)
             if not response.is_success:
-                print(f"  ✗ 请求失败: {response.error_message}")
+                task.record_crawl_error(url, f"请求失败: {response.error_message}", "RequestFailed")
+                self._publish_domain_events(task)
                 continue
             
             # 5. 领域服务 - 提取页面元信息：标题/作者/摘要/关键词/发布日期
             try:
                 metadata = self._crawl_service.extract_page_metadata(response.content, url)
-                print(f"  ✓ 提取元信息: {metadata.title}")
             except Exception as e:
-                print(f"  ✗ 元信息提取失败: {str(e)}")
+                task.record_crawl_error(url, f"元信息提取失败: {str(e)}", "MetadataExtractionFailed")
+                self._publish_domain_events(task)
                 continue
             
             # 6. 领域服务 - 发现可爬取的链接：去重/白名单/robots 检查
@@ -248,18 +243,17 @@ class CrawlerService:
                 crawlable_links = self._crawl_service.discover_crawlable_links(
                     response.content, url, task
                 )
-                print(f"  ✓ 发现 {len(crawlable_links)} 个可爬取链接")
             except Exception as e:
-                print(f"  ✗ 链接提取失败: {str(e)}")
+                task.record_crawl_error(url, f"链接提取失败: {str(e)}", "LinkExtractionFailed")
+                self._publish_domain_events(task)
                 crawlable_links = []
             
             # 7. 领域服务 - 识别PDF链接：扩展名 + HEAD Content-Type 校验
             try:
                 pdf_links = self._crawl_service.identify_pdf_links(crawlable_links)
-                if pdf_links:
-                    print(f"  ✓ 发现 {len(pdf_links)} 个PDF链接")
             except Exception as e:
-                print(f"  ✗ PDF识别失败: {str(e)}")
+                task.record_crawl_error(url, f"PDF识别失败: {str(e)}", "PdfIdentificationFailed")
+                self._publish_domain_events(task)
                 pdf_links = []
             
             # 8. 更新聚合根状态：记录已访问URL
@@ -300,7 +294,6 @@ class CrawlerService:
             task.stop_crawl()
         elif self._queue.is_empty() and task.status == TaskStatus.RUNNING:
             task.complete_crawl()
-            print(f"任务 {task.id} 完成! 共爬取 {len(task.results)} 个页面")
         
         # 发布最终状态变更事件（Stopped 或 Completed）
         self._publish_domain_events(task)
@@ -327,7 +320,3 @@ class CrawlerService:
             "queue_size": self._queue.size(),
             "current_depth": self._queue.get_current_depth()
         }
-
-
-
-
