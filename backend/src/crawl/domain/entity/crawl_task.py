@@ -1,11 +1,15 @@
 from dataclasses import dataclass, field
 import datetime
-from typing import List, Set
+from typing import List, Set, Optional
 from urllib.parse import urlparse
 from ..value_objects.crawl_config import CrawlConfig
 from ..value_objects.crawl_status import TaskStatus
 from ..value_objects.crawl_result import CrawlResult
 from src.shared.domain.events import DomainEvent
+from ..domain_event.task_life_cycle_event import (
+    TaskCreatedEvent, TaskStartedEvent, TaskPausedEvent, 
+    TaskResumedEvent, TaskStoppedEvent, TaskCompletedEvent, TaskFailedEvent
+)
 
 @dataclass
 class CrawlTask:
@@ -35,44 +39,110 @@ class CrawlTask:
         self.url_queue = []
         self._visited_urls = set()
         self._life_cycle_events = []
+        
+        # 记录任务创建事件
+        self._record_event(TaskCreatedEvent(
+            task_id=self.id,
+            start_url=self.config.start_url,
+            strategy=self.config.strategy.value,
+            max_depth=self.config.max_depth,
+            max_pages=self.config.max_pages,
+            request_interval=self.config.request_interval,
+            allow_domains=self.config.allow_domains
+        ))
+
+    def _record_event(self, event: DomainEvent):
+        """内部方法：记录领域事件"""
+        self._life_cycle_events.append(event)
+        self.updated_at = datetime.datetime.now()
+
+    def get_uncommitted_events(self) -> List[DomainEvent]:
+        """获取未提交的领域事件（用于后续发布）"""
+        # 注意：这里通常应该返回并清空，或者由外部管理。
+        # 为了简单起见，我们这里只返回副本，清空逻辑由应用服务处理
+        # 或者我们遵循：事件是实体的历史记录，不应被清空？
+        # 在Event Sourcing中是历史，在普通DDD中通常在事务提交后清空。
+        # 这里我们假设应用服务会读取并发布，然后如果需要可以调用 clear_events
+        return list(self._life_cycle_events)
+
+    def clear_events(self):
+        """清空已处理的事件"""
+        self._life_cycle_events.clear()
 
 #-------------------   状态转换方法   -------------------
 
     def start_crawl(self):
         """开始爬取任务"""
-        # TODO 先进行状态检查，是否为PENDING
+        if self.status != TaskStatus.PENDING:
+            # 只有PENDING状态可以开始
+            # 如果已经是RUNNING，忽略；如果是其他状态，可能抛异常
+            return
+
         self.status = TaskStatus.RUNNING
+        self._record_event(TaskStartedEvent(task_id=self.id))
 
 
     def pause_crawl(self):
         """暂停爬取任务"""
-        # TODO 先进行状态检查，是否为RUNNING
+        if self.status != TaskStatus.RUNNING:
+            return
+
         self.status = TaskStatus.PAUSED
+        self._record_event(TaskPausedEvent(task_id=self.id))
 
     def resume_crawl(self):
         """恢复爬取任务"""
+        if self.status != TaskStatus.PAUSED:
+            return 
+
         self.status = TaskStatus.RUNNING
+        self._record_event(TaskResumedEvent(task_id=self.id))
 
     
-    def stop_crawl(self):
+    def stop_crawl(self, reason: str = "用户手动停止"):
         """停止爬取任务"""
+        if self.status in [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.STOPPED]:
+            return
+
         self.status = TaskStatus.STOPPED
+        self._record_event(TaskStoppedEvent(task_id=self.id, reason=reason))
 
 
-    def complete_crawl(self):
+    def complete_crawl(self, total_pdfs: int = 0):
         """完成爬取任务"""
-        self.status = TaskStatus.COMPLETED
+        if self.status in [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.STOPPED]:
+            return
 
-    def fail_crawl(self):
+        self.status = TaskStatus.COMPLETED
+        
+        # 计算耗时
+        elapsed = (datetime.datetime.now() - self.created_at).total_seconds()
+        
+        self._record_event(TaskCompletedEvent(
+            task_id=self.id,
+            total_pages=len(self._visited_urls),
+            total_pdfs=total_pdfs, # 这个数据可能需要外部传入，或者在实体内维护计数
+            elapsed_time=elapsed
+        ))
+
+    def fail_crawl(self, error_message: str, stack_trace: str = ""):
         """失败爬取任务"""
+        # 失败可以从任何状态发生
         self.status = TaskStatus.FAILED
+        self._record_event(TaskFailedEvent(
+            task_id=self.id,
+            error_message=error_message,
+            stack_trace=stack_trace
+        ))
 
 #-------------------   URL管理方法   -------------------
 
 
     def add_url_to_queue(self, url: str):
         """将URL添加到队列，执行去重和robots.txt验证"""
-        self.url_queue.append(url)
+        # 注意：这里只做简单的队列管理，不触发核心生命周期事件
+        if url not in self._visited_urls and url not in self.url_queue:
+             self.url_queue.append(url)
 
 #-------------------   业务规则验证   -------------------
 
@@ -94,7 +164,3 @@ class CrawlTask:
     def visited_urls(self) -> Set[str]:
         """获取已访问URL集合"""
         return self._visited_urls
-
-
-
-

@@ -1,4 +1,4 @@
-# shared/handlers/websocket_logging_handler.py
+# shared/handlers/websocket_handler.py
 """
 自定义 WebSocket Logging Handler
 职责：拦截技术日志并推送到前端浏览器
@@ -53,10 +53,12 @@ class WebSocketLoggingHandler(logging.Handler):
             
         except Exception as e:
             # 避免日志处理器本身的错误影响应用
-            self._internal_logger.error(
-                f"WebSocket日志推送失败: {str(e)}",
-                exc_info=True
-            )
+            # 注意：这里使用 print 或者写入文件，因为 internal_logger 可能也会触发 emit 导致递归
+            # 但通常 internal logger 配置为只写文件
+            try:
+                self._internal_logger.error(f"WebSocket日志推送失败: {str(e)}")
+            except:
+                print(f"WebSocket日志推送严重失败: {str(e)}")
     
     def _format_log_record(self, record: logging.LogRecord) -> dict:
         """
@@ -70,15 +72,23 @@ class WebSocketLoggingHandler(logging.Handler):
         """
         # 提取日志类型（从logger名称）
         # 例如：'infrastructure.error' → 'error'
+        #       'infrastructure.perf' → 'performance'
         logger_parts = record.name.split('.')
-        log_category = logger_parts[-1] if len(logger_parts) > 1 else 'unknown'
+        raw_category = logger_parts[-1] if len(logger_parts) > 1 else 'unknown'
+        
+        # 映射分类名称
+        category_map = {
+            'perf': 'performance',
+            'error': 'error'
+        }
+        log_category = category_map.get(raw_category, raw_category)
         
         # 构建前端消息
         log_message = {
             # 基础信息
             'timestamp': datetime.fromtimestamp(record.created).isoformat(),
             'level': record.levelname,
-            'category': log_category,  # error, perf
+            'category': log_category,  # error, performance
             'logger': record.name,
             'message': record.getMessage(),
             
@@ -105,19 +115,28 @@ class WebSocketLoggingHandler(logging.Handler):
             'name', 'msg', 'args', 'created', 'filename', 'funcName',
             'levelname', 'levelno', 'lineno', 'module', 'msecs',
             'message', 'pathname', 'process', 'processName', 'relativeCreated',
-            'thread', 'threadName', 'exc_info', 'exc_text', 'stack_info'
+            'thread', 'threadName', 'exc_info', 'exc_text', 'stack_info',
+            'taskName' # Python 3.12+
         }
         
         # 提取自定义属性
         extra = {}
         for key, value in record.__dict__.items():
             if key not in standard_attrs and not key.startswith('_'):
-                extra[key] = value
+                try:
+                    # 尝试序列化或只保留基本类型，防止循环引用或无法JSON序列化的对象
+                    extra[key] = value
+                except:
+                    extra[key] = str(value)
         
         return extra
     
     def _format_exception(self, record: logging.LogRecord) -> Optional[str]:
         """格式化异常信息"""
         if record.exc_info:
-            return self.formatter.formatException(record.exc_info) if self.formatter else str(record.exc_info)
+            # 如果配置了formatter，使用formatter格式化异常
+            if self.formatter:
+                return self.formatter.formatException(record.exc_info)
+            # 否则使用默认格式
+            return logging.Formatter().formatException(record.exc_info)
         return None

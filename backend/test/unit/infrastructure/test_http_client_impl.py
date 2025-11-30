@@ -10,7 +10,7 @@ import os
 import requests_mock
 
 # 添加 backend 目录到系统路径
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../')))
 
 from src.crawl.infrastructure.http_client_impl import HttpClientImpl
 from src.crawl.domain.value_objects.http_response import HttpResponse

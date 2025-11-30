@@ -24,6 +24,10 @@ class TaskResumedEvent(DomainEvent):
     pass
 
 @dataclass
+class TaskStoppedEvent(DomainEvent):
+    reason: str = "用户手动停止"
+
+@dataclass
 class TaskCompletedEvent(DomainEvent):
     total_pages: int
     total_pdfs: int

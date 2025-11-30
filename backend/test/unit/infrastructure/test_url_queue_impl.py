@@ -9,7 +9,7 @@ import sys
 import os
 
 # 添加 backend 目录到系统路径
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../')))
 
 from src.crawl.infrastructure.url_queue_impl import UrlQueueImpl
 from src.crawl.domain.value_objects.queued_url import QueuedUrl

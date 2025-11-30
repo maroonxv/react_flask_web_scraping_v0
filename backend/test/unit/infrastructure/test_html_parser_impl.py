@@ -4,7 +4,7 @@ import os
 from unittest.mock import Mock, patch
 
 # 将 backend 目录添加到系统路径，以便导入 src 模块
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../')))
 
 from src.crawl.infrastructure.html_parser_impl import HtmlParserImpl
 

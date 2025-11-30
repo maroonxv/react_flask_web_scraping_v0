@@ -10,7 +10,7 @@ import sys
 import os
 
 # 添加 backend 目录到系统路径
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../')))
 
 from src.crawl.infrastructure.robots_txt_parser_impl import RobotsTxtParserImpl
 
