@@ -1,197 +1,161 @@
+# backend/test/integration/test_end_to_end_crawl.py
 import pytest
 import time
+from threading import Event
+from unittest.mock import MagicMock, ANY
 import sys
 import os
-from flask import Flask
 
-# Ensure backend directory is in sys.path so we can import src
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
+# Add backend to path
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(os.path.dirname(os.path.dirname(current_dir)))
+sys.path.insert(0, project_root)
 
-from src import create_app
-from src.crawl.view.crawler_view import _service
+from backend.src.crawl.services.crawler_service import CrawlerService
+from backend.src.crawl.domain.value_objects.crawl_config import CrawlConfig
+from backend.src.crawl.domain.value_objects.crawl_strategy import CrawlStrategy
+from backend.src.crawl.domain.value_objects.crawl_status import TaskStatus
+from backend.src.crawl.infrastructure.url_queue_impl import UrlQueueImpl
+from backend.src.shared.event_bus import EventBus
+from backend.src.crawl.domain.demand_interface.i_http_client import IHttpClient
+from backend.src.crawl.domain.demand_interface.i_url_queue import IUrlQueue
+from backend.src.crawl.domain.domain_service.i_crawl_domain_service import ICrawlDomainService
+
+# Mock实现，用于隔离网络和复杂依赖
+class MockHttpClient(IHttpClient):
+    def __init__(self):
+        self.get_count = 0
+        
+    def get(self, url: str, **kwargs):
+        self.get_count += 1
+        mock_response = MagicMock()
+        mock_response.is_success = True
+        mock_response.status_code = 200
+        mock_response.content = b"<html><body><a href='https://news.ycombinator.com/item?id=123'>Link</a></body></html>"
+        return mock_response
+
+class MockCrawlDomainService(ICrawlDomainService):
+    def extract_page_metadata(self, content, url):
+        mock_meta = MagicMock()
+        mock_meta.title = "Hacker News"
+        mock_meta.author = None
+        mock_meta.abstract = None
+        mock_meta.keywords = []
+        mock_meta.publish_date = None
+        return mock_meta
+
+    def discover_crawlable_links(self, content, url, task):
+        # 模拟发现链接
+        if "ycombinator.com" in url:
+            return ["https://news.ycombinator.com/item?id=123", "https://news.ycombinator.com/item?id=456"]
+        return []
+
+    def identify_pdf_links(self, links):
+        return []
 
 @pytest.fixture
-def app():
-    """Create Flask application for testing"""
-    app = create_app()
-    app.config.update({
-        "TESTING": True,
-    })
-    yield app
+def crawler_service():
+    http_client = MockHttpClient()
+    domain_service = MockCrawlDomainService()
+    event_bus = EventBus()
+    
+    service = CrawlerService(
+        crawl_domain_service=domain_service,
+        http_client=http_client,
+        event_bus=event_bus
+    )
+    return service
 
-@pytest.fixture
-def client(app):
-    """Create Flask test client"""
-    return app.test_client()
-
-@pytest.fixture(autouse=True)
-def cleanup_service_state():
-    """Clean up the singleton service state before and after each test"""
-    # Clear internal state of the singleton service
-    _service._tasks.clear()
-    _service._paused_tasks.clear()
-    _service._stopped_tasks.clear()
-    _service._queue.clear()
-    yield
-    # Cleanup after test
-    _service._tasks.clear()
-    _service._paused_tasks.clear()
-    _service._stopped_tasks.clear()
-    _service._queue.clear()
-
-from unittest.mock import patch
-
-def test_end_to_end_crawl_success(client, requests_mock):
+def test_end_to_end_crawl_lifecycle(crawler_service):
     """
-    End-to-End Test: Complete Crawl Flow
-    
-    Scenario:
-    1. User starts a crawl task via API for a mock website.
-    2. The crawler visits Page 1, finds a link to Page 2.
-    3. The crawler visits Page 2, finds no more links.
-    4. The task completes.
-    5. User verifies the status and results via API.
+    端到端测试爬取任务生命周期：
+    创建 -> 启动 -> 运行 -> 暂停 -> 修改配置 -> 恢复 -> 停止 -> 查看结果
     """
+    # 1. 初始化爬取任务
+    config = CrawlConfig(
+        start_urls=["https://news.ycombinator.com/"],
+        strategy=CrawlStrategy.BFS,
+        max_depth=2,
+        max_pages=10,
+        request_interval=0.1, # 快速测试
+        allow_domains=["ycombinator.com"]
+    )
     
-    # Patch RobotFileParser to avoid urllib network calls
-    with patch("src.crawl.infrastructure.robots_txt_parser_impl.RobotFileParser") as MockRobotParser:
-        mock_parser_instance = MockRobotParser.return_value
-        mock_parser_instance.can_fetch.return_value = True
-        mock_parser_instance.read.return_value = None # Simulate successful read (or no-op)
+    task_id = crawler_service.create_crawl_task(config)
+    assert task_id is not None
     
-        # 1. Setup Mock Website
-        base_url = "http://mock-site.com"
-        
-        # Mock robots.txt (requests_mock handles requests, but we patched the parser anyway)
-        # keeping this for consistency if we switch implementation later
-        requests_mock.get(f"{base_url}/robots.txt", text="User-agent: *\nDisallow:")
-        
-        # Mock Page 1 (Start URL) - Links to Page 2
-        page1_html = """
-        <html>
-            <head><title>Page 1 Title</title></head>
-            <body>
-                <h1>Welcome to Page 1</h1>
-                <a href="/page2">Go to Page 2</a>
-            </body>
-        </html>
-        """
-        requests_mock.get(f"{base_url}/page1", text=page1_html, headers={'Content-Type': 'text/html'})
-        
-        # Mock Page 2 - No links
-        page2_html = """
-        <html>
-            <head><title>Page 2 Title</title></head>
-            <body>
-                <h1>Content of Page 2</h1>
-                <p>This is the end.</p>
-            </body>
-        </html>
-        """
-        requests_mock.get(f"{base_url}/page2", text=page2_html, headers={'Content-Type': 'text/html'})
+    # 验证任务已创建且状态为PENDING
+    status = crawler_service.get_task_status(task_id)
+    assert status["status"] == TaskStatus.PENDING.value
+    assert status["queue_size"] == 0 # 此时队列尚未初始化
 
-        # 2. Start Crawl Task
-        payload = {
-            "start_url": f"{base_url}/page1",
-            "strategy": "BFS",
-            "max_depth": 2,
-            "max_pages": 10,
-            "interval": 0.01,  # Very fast interval for testing
-            "allow_domains": ["mock-site.com"]
-        }
-        
-        response = client.post("/api/crawl/start", json=payload)
-        
-        assert response.status_code == 201
-        data = response.get_json()
-        assert "task_id" in data
-        task_id = data["task_id"]
-        
-        # 3. Poll Status until Completed
-        # Since the crawler runs in a separate thread, we need to wait
-        max_retries = 50  # 5 seconds max
-        final_status = None
-        
-        for _ in range(max_retries):
-            status_response = client.get(f"/api/crawl/status/{task_id}")
-            assert status_response.status_code == 200
-            status_data = status_response.get_json()
-            
-            status = status_data["status"]
-            if status in ["COMPLETED", "FAILED", "STOPPED"]:
-                final_status = status
-                break
-            
-            time.sleep(0.1)
-        
-        # 4. Verify Completion
-        if final_status != "COMPLETED":
-            pytest.fail(f"Crawl task failed or timed out. Final status: {final_status}. Data: {status_data}")
-        
-        # 5. Verify Results
-        # Check counts from API
-        assert status_data["visited_count"] == 2
-        assert status_data["result_count"] == 2
-        assert status_data["queue_size"] == 0
-        
-        # 6. Verify Data Integrity (White-box check via singleton service)
-        # Since API doesn't expose full results content, we verify internal state
-        task = _service._tasks[task_id]
-        results = task.results
-        
-        # Verify Page 1
-        page1_result = next((r for r in results if r.url == f"{base_url}/page1"), None)
-        assert page1_result is not None
-        assert page1_result.title == "Page 1 Title"
-        
-        # Verify Page 2
-        page2_result = next((r for r in results if r.url == f"{base_url}/page2"), None)
-        assert page2_result is not None
-        assert page2_result.title == "Page 2 Title"
+    # 2. 启动爬取任务
+    crawler_service.start_crawl_task(task_id)
+    
+    # 等待一小段时间让线程启动并爬取一些页面
+    time.sleep(1)
+    
+    # 验证状态为RUNNING
+    status = crawler_service.get_task_status(task_id)
+    assert status["status"] == TaskStatus.RUNNING.value
+    # 应该已经有结果了
+    assert status["visited_count"] > 0
+    assert status["result_count"] > 0
+    
+    # 3. 暂停爬取任务
+    crawler_service.pause_crawl_task(task_id)
+    
+    # 验证状态为PAUSED
+    status = crawler_service.get_task_status(task_id)
+    assert status["status"] == TaskStatus.PAUSED.value
+    
+    # 记录当前的爬取数量，用于后续验证是否真的暂停（数量不再增加）
+    count_after_pause = status["visited_count"]
+    time.sleep(0.5)
+    status = crawler_service.get_task_status(task_id)
+    assert status["visited_count"] == count_after_pause
+    
+    # 4. 修改爬取任务的配置
+    # 修改间隔为0.5s，最大深度为5
+    crawler_service.set_crawl_config(task_id, interval=0.5, max_depth=5)
+    
+    # 验证配置已更新
+    task = crawler_service._tasks[task_id]
+    assert task.config.request_interval == 0.5
+    assert task.config.max_depth == 5
+    
+    # 5. 恢复爬取任务
+    crawler_service.resume_crawl_task(task_id)
+    
+    # 验证状态恢复为RUNNING
+    status = crawler_service.get_task_status(task_id)
+    assert status["status"] == TaskStatus.RUNNING.value
+    
+    # 等待爬取继续进行
+    time.sleep(1)
+    status = crawler_service.get_task_status(task_id)
+    assert status["visited_count"] > count_after_pause
+    
+    # 6. 停止爬取任务
+    crawler_service.stop_crawl_task(task_id)
+    
+    # 验证状态为STOPPED
+    status = crawler_service.get_task_status(task_id)
+    # 注意：stop是异步信号，可能需要一点时间或者立即生效（取决于循环检查点）
+    # 在当前实现中，stop_crawl_task直接修改了状态，所以应该立即生效
+    assert status["status"] == TaskStatus.STOPPED.value
+    
+    # 验证队列已清空
+    assert status["queue_size"] == 0
+    
+    # 7. 获取爬取结果
+    results = crawler_service.get_task_results(task_id)
+    assert len(results) > 0
+    assert results[0].url == "https://news.ycombinator.com/"
+    assert results[0].title == "Hacker News"
 
-def test_stop_crawl_task(client, requests_mock):
-    """
-    End-to-End Test: Stop Crawl Flow
-    
-    Scenario:
-    1. Start a long-running task (infinite loop of pages or slow pages).
-    2. Call Stop API.
-    3. Verify status becomes STOPPED.
-    """
-    base_url = "http://mock-site.com"
-    requests_mock.get(f"{base_url}/robots.txt", text="User-agent: *\nDisallow:")
-    
-    # Infinite chain of pages: page1 -> page1 (loop) or just slow response
-    # Using a loop to ensure it keeps running until stopped
-    page1_html = '<html><body><a href="/page1">Loop</a></body></html>'
-    requests_mock.get(f"{base_url}/page1", text=page1_html, headers={'Content-Type': 'text/html'})
-    
-    # Start Task
-    payload = {
-        "start_url": f"{base_url}/page1",
-        "interval": 0.1
-    }
-    response = client.post("/api/crawl/start", json=payload)
-    task_id = response.get_json()["task_id"]
-    
-    # Let it run for a split second
-    time.sleep(0.2)
-    
-    # Stop Task
-    stop_response = client.post(f"/api/crawl/stop/{task_id}")
-    assert stop_response.status_code == 200
-    
-    # Poll for STOPPED status
-    max_retries = 20
-    for _ in range(max_retries):
-        status_response = client.get(f"/api/crawl/status/{task_id}")
-        status = status_response.get_json()["status"]
-        if status == "STOPPED":
-            break
-        time.sleep(0.1)
-    else:
-        pytest.fail(f"Task did not stop in time. Current status: {status}")
-    
-    # Verify it actually stopped
-    final_status = client.get(f"/api/crawl/status/{task_id}").get_json()["status"]
-    assert final_status == "STOPPED"
+    print(f"\n测试通过！共爬取 {len(results)} 个页面。")
+
+if __name__ == "__main__":
+    # 允许直接运行此脚本进行测试
+    pytest.main([__file__, "-v", "-s"])

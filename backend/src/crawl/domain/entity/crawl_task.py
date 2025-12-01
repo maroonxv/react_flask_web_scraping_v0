@@ -23,7 +23,7 @@ class CrawlTask:
     results: List[CrawlResult] = field(default_factory=list)
     created_at: datetime.datetime = field(default_factory=datetime.datetime.now)
     updated_at: datetime.datetime = field(default_factory=datetime.datetime.now)
-    url_queue: List[str] = field(default_factory=list)
+    url_queue_obj: Optional[object] = None # 实际的UrlQueue对象，非持久化字段
 
     _visited_urls: Set[str] = field(default_factory=set)
     _life_cycle_events: List[DomainEvent] = field(default_factory=list)
@@ -37,7 +37,7 @@ class CrawlTask:
  
         self.created_at = datetime.datetime.now()
         self.updated_at = self.created_at
-        self.url_queue = []
+        self.url_queue_obj = None
         self._visited_urls = set()
         self._life_cycle_events = []
         
@@ -142,8 +142,23 @@ class CrawlTask:
     def add_url_to_queue(self, url: str):
         """将URL添加到队列，执行去重和robots.txt验证"""
         # 注意：这里只做简单的队列管理，不触发核心生命周期事件
-        if url not in self._visited_urls and url not in self.url_queue:
-             self.url_queue.append(url)
+        # 需要由Service层调用UrlQueueImpl进行入队，这里仅做实体层校验
+        if url not in self._visited_urls:
+             # 实际入队逻辑由外部服务操作 self.url_queue_obj
+             pass
+
+    def set_config(self, interval: float = None, max_pages: int = None, max_depth: int = None, strategy: CrawlStrategy = None):
+        """设置爬取配置"""
+        if interval is not None:
+            self.config.request_interval = interval
+        if max_pages is not None:
+            self.config.max_pages = max_pages
+        if max_depth is not None:
+            self.config.max_depth = max_depth
+        if strategy is not None:
+            self.config.strategy = strategy
+        self.updated_at = datetime.datetime.now()
+        # 这里可以记录配置变更事件，如果需要的话
 
 #-------------------   业务规则验证   -------------------
 

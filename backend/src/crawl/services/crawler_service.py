@@ -19,6 +19,7 @@
 from datetime import datetime
 from typing import Dict, List, Optional
 from threading import Thread
+import time  # 引入 time 模块
 from ..domain.domain_service.i_crawl_domain_service import ICrawlDomainService
 from ..domain.demand_interface.i_http_client import IHttpClient
 from ..domain.demand_interface.i_url_queue import IUrlQueue
@@ -27,6 +28,8 @@ from ..domain.value_objects.crawl_status import TaskStatus
 from ..domain.value_objects.crawl_result import CrawlResult
 from src.shared.event_bus import EventBus
 
+
+from ..infrastructure.url_queue_impl import UrlQueueImpl
 
 class CrawlerService:
     """
@@ -42,7 +45,7 @@ class CrawlerService:
         self,
         crawl_domain_service: ICrawlDomainService,
         http_client: IHttpClient,
-        url_queue: IUrlQueue,
+        # url_queue: IUrlQueue, # 移除单例注入
         event_bus: Optional[EventBus] = None
     ):
         """
@@ -51,13 +54,13 @@ class CrawlerService:
         参数:
             crawl_domain_service: 爬取领域服务
             http_client: HTTP客户端
-            url_queue: URL队列
+            # url_queue: URL队列
             event_bus: 事件总线 (可选，便于测试)
         """
         # 依赖注入：保存领域服务、HTTP客户端与URL队列引用
         self._crawl_service = crawl_domain_service
         self._http = http_client
-        self._queue = url_queue
+        # self._queue = url_queue # 移除单例引用
         self._event_bus = event_bus
         
         # 暂时用字典模拟任务存储(后续可替换为仓储)
@@ -69,25 +72,52 @@ class CrawlerService:
         # 记录每个任务的工作线程
         self._threads: Dict[str, Thread] = {}
 
-    def _publish_domain_events(self, task: CrawlTask):
-        """发布任务中积压的领域事件"""
-        if not self._event_bus:
-            return
-            
-        events = task.get_uncommitted_events()
-        for event in events:
-            self._event_bus.publish(event)
-        
-        # 清空已发布的事件
-        task.clear_events()
 
-    def start_crawl_task(self, task: CrawlTask) -> None:
+
+# -------------------- 爬取任务生命周期管理 --------------------
+
+    def create_crawl_task(self, config: CrawlConfig) -> str:
+        """
+        创建爬取任务（不自动启动）
+        
+        参数:
+            config: 任务配置对象
+            
+        返回:
+            task_id
+        """
+        # 生成唯一ID
+        import uuid
+        task_id = str(uuid.uuid4())
+        
+        # 创建聚合根
+        task = CrawlTask(id=task_id, config=config)
+        
+        # 初始化该任务的专属URL队列
+        # 重构：每个任务拥有独立的UrlQueueImpl实例
+        task.url_queue_obj = UrlQueueImpl()
+        
+        # 存储任务
+        self._tasks[task_id] = task
+        
+        return task_id
+
+    def start_crawl_task(self, task_id: str) -> None:
         """
         启动爬取任务
         
         参数:
-            task: CrawlTask聚合根实例
+            task_id: 任务ID
         """
+        # 0. 检查是否有其他任务正在运行
+        for t in self._tasks.values():
+            if t.id != task_id and t.status == TaskStatus.RUNNING:
+                raise ValueError(f"已有任务 {t.id} 正在运行，请先停止它")
+        
+        task = self._tasks.get(task_id)
+        if not task:
+            raise ValueError(f"任务 {task_id} 不存在")
+
         # 1. 验证任务状态：仅允许从 PENDING/PAUSED 进入 RUNNING
         if task.status not in [TaskStatus.PENDING, TaskStatus.PAUSED]:
             raise ValueError(f"任务状态为 {task.status}，无法启动")
@@ -101,16 +131,18 @@ class CrawlerService:
         # 发布状态变更事件
         self._publish_domain_events(task)
 
-        # 3. 存储任务引用：便于后续控制与查询
-        self._tasks[task.id] = task
-        
-        # 4. 初始化队列(仅在首次启动时)：用起始URL与策略填充队列
-        if task.status == TaskStatus.RUNNING and not self._queue.size():
-            self._queue.initialize(
-                start_url=task.config.start_url,
-                strategy=task.config.strategy.value,  # 假设strategy是Enum
-                max_depth=task.config.max_depth
-            )
+        # 3. 初始化队列(仅在首次启动时)
+        queue = task.url_queue_obj
+        if task.status == TaskStatus.RUNNING and queue.is_empty():
+             # 只有当队列为空（可能是新任务或意外清空）时才初始化
+             
+             if len(task.visited_urls) == 0: # 简单判断是否新任务
+                 queue.clear()
+                 queue.initialize(
+                    start_url=task.config.start_url,
+                    strategy=task.config.strategy.value,
+                    max_depth=task.config.max_depth
+                )
         
         # 5. 异步开始爬取循环：开启守护线程，避免阻塞调用方
         t = Thread(target=self._execute_crawl_loop, args=(task,), daemon=True)
@@ -176,7 +208,11 @@ class CrawlerService:
         task.stop_crawl()
         self._publish_domain_events(task)
         
-        self._queue.clear()
+        if task.url_queue_obj:
+            task.url_queue_obj.clear()
+
+
+# -------------------- 爬取任务结果、状态查询 --------------------
     
     def get_task_results(self, task_id: str) -> List[CrawlResult]:
         """
@@ -187,6 +223,33 @@ class CrawlerService:
             return []
         return task.results
 
+
+    def get_task_status(self, task_id: str) -> dict:
+        """
+        获取任务状态(用于GUI显示)
+        
+        返回:
+            任务状态字典
+            - task_id/status/visited_count/result_count/queue_size/current_depth
+        """
+        # 查询任务，不存在则返回错误消息
+        task = self._tasks.get(task_id)
+        if not task:
+            return {"error": "任务不存在"}
+        
+        return {
+            "task_id": task.id,
+            "status": task.status.value,
+            # 注意：实体中维护了去重集合 _visited_urls
+            "visited_count": len(task.visited_urls),
+            "result_count": len(task.results),
+            "queue_size": task.url_queue_obj.size() if task.url_queue_obj else 0,
+            "current_depth": task.url_queue_obj.get_current_depth() if task.url_queue_obj else 0
+        }
+
+# ---------------------  内部方法：执行爬取循环、处理事件队列 ---------------------
+
+
     def _execute_crawl_loop(self, task: CrawlTask) -> None:
         """
         执行爬取循环
@@ -194,7 +257,11 @@ class CrawlerService:
         参数:
             task: CrawlTask聚合根
         """
-        while not self._queue.is_empty():
+        queue = task.url_queue_obj
+        if not queue:
+             return
+
+        while not queue.is_empty():
             # 检查是否被暂停/停止：优先响应外部控制
             if task.id in self._stopped_tasks:
                 break
@@ -206,7 +273,7 @@ class CrawlerService:
                 break
             
             # 1. 从队列取出URL：根据策略（BFS/DFS/PRIORITY）返回下一个待爬取项
-            queued_url = self._queue.dequeue()
+            queued_url = queue.dequeue()
             if not queued_url:
                 break
             
@@ -287,36 +354,70 @@ class CrawlerService:
                 if not task.is_url_visited(link):
                     # 计算优先级(示例: PDF链接优先级更高)
                     priority = 10 if link.endswith('.pdf') else 5
-                    self._queue.enqueue(link, depth=depth + 1, priority=priority)
+                    queue.enqueue(link, depth=depth + 1, priority=priority)
+            
+            # 11. 请求间隔控制 (Rate Limiting)
+            time.sleep(task.config.request_interval)
         
         # 11. 爬取完成或停止：根据停止标志或队列耗尽设置最终状态
         if task.id in self._stopped_tasks:
             task.stop_crawl()
-        elif self._queue.is_empty() and task.status == TaskStatus.RUNNING:
+        elif queue.is_empty() and task.status == TaskStatus.RUNNING:
             task.complete_crawl()
         
         # 发布最终状态变更事件（Stopped 或 Completed）
         self._publish_domain_events(task)
     
-    def get_task_status(self, task_id: str) -> dict:
-        """
-        获取任务状态(用于GUI显示)
+    def _publish_domain_events(self, task: CrawlTask):
+        """发布任务中积压的领域事件"""
+        if not self._event_bus:
+            return
+            
+        events = task.get_uncommitted_events()
+        for event in events:
+            self._event_bus.publish(event)
         
-        返回:
-            任务状态字典
-            - task_id/status/visited_count/result_count/queue_size/current_depth
+        # 清空已发布的事件
+        task.clear_events()
+
+
+# --------------------- 设置队列操作与策略 ---------------------
+    # 控制队列
+
+    # 逐个添加url
+    def add_url(self, task_id: str, url: str, depth: int = 0, priority: int = 0) -> None:
         """
-        # 查询任务，不存在则返回错误消息
+        逐个添加URL到队列
+        
+        参数:
+            task_id: 任务ID
+            url: 待爬取的URL
+            depth: 当前深度(从起始URL开始计数)
+            priority: 优先级(仅在PRIORITY策略下有效)
+        """
         task = self._tasks.get(task_id)
         if not task:
-            return {"error": "任务不存在"}
+            raise ValueError(f"任务 {task_id} 不存在")
+            
+        if task.url_queue_obj:
+             task.url_queue_obj.enqueue(url, depth=depth, priority=priority)
+
+    def set_crawl_config(self, task_id: str, interval: float = None, max_pages: int = None, max_depth: int = None) -> None:
+        """
+        设置爬取配置（仅限 interval/max_pages/max_depth）
         
-        return {
-            "task_id": task.id,
-            "status": task.status.value,
-            # 注意：实体中维护了去重集合 _visited_urls
-            "visited_count": len(task.visited_urls),
-            "result_count": len(task.results),
-            "queue_size": self._queue.size(),
-            "current_depth": self._queue.get_current_depth()
-        }
+        参数:
+            task_id: 任务ID
+            interval: 请求间隔
+            max_pages: 最大页面数
+            max_depth: 最大深度
+        """
+        task = self._tasks.get(task_id)
+        if not task:
+            raise ValueError(f"任务 {task_id} 不存在")
+            
+        # 更新任务配置
+        task.set_config(interval=interval, max_pages=max_pages, max_depth=max_depth)
+
+
+

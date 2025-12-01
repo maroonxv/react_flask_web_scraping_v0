@@ -36,7 +36,9 @@ _parser = HtmlParserImpl()
 _robots = RobotsTxtParserImpl()
 _queue = UrlQueueImpl()
 _domain_service = CrawlDomainServiceImpl(_http, _parser, _robots)
-_service = CrawlerService(_domain_service, _http, _queue)
+# _service = CrawlerService(_domain_service, _http, _queue)
+# 重构：UrlQueue 不再单例注入，而是由 Task 内部管理
+_service = CrawlerService(_domain_service, _http)
 
 def inject_event_bus(event_bus):
     """依赖注入：注入事件总线"""
@@ -44,16 +46,9 @@ def inject_event_bus(event_bus):
     # 更好的做法是使用依赖注入框架
     _service._event_bus = event_bus
 
-@bp.route("/start", methods=["POST"])
-def start():
-    # 启动爬取任务
-    # 请求体（JSON）：
-    # - start_url: 起始 URL（必填）
-    # - strategy: 爬取策略（"BFS"/"DFS"），默认 "BFS"
-    # - max_depth: 最大深度，默认 3
-    # - max_pages: 最大页面数量，默认 100
-    # - interval: 请求间隔（秒），默认 1.0
-    # - allow_domains: 允许的域名白名单（数组），默认空（不限制）
+@bp.route("/create", methods=["POST"])
+def create():
+    """创建爬取任务（不自动启动）"""
     data = request.get_json(force=True) or {}
     start_url = data.get("start_url")
     strategy = data.get("strategy", "BFS")
@@ -62,12 +57,10 @@ def start():
     interval = float(data.get("interval", 1.0))
     allow_domains = data.get("allow_domains", [])
 
-    # 基本校验：起始 URL 必填
     if not start_url:
         return jsonify({"error": "start_url is required"}), 400
 
     try:
-        # 构造任务配置并创建任务聚合根
         config = CrawlConfig(
             start_url=start_url,
             strategy=CrawlStrategy(strategy),
@@ -76,15 +69,55 @@ def start():
             request_interval=interval,
             allow_domains=allow_domains,
         )
-        task = CrawlTask(id=str(uuid.uuid4()), config=config)
-
-        # 异步启动：内部使用线程执行爬取循环，避免阻塞请求
-        _service.start_crawl_task(task)
-
-        # 返回任务 ID，供前端后续查询任务状态/停止任务
-        return jsonify({"task_id": task.id}), 201
+        
+        task_id = _service.create_crawl_task(config)
+        return jsonify({"task_id": task_id}), 201
     except Exception as e:
-        # 统一异常处理：返回 400 与错误信息
+        return jsonify({"error": str(e)}), 400
+
+@bp.route("/start/<task_id>", methods=["POST"])
+def start(task_id: str):
+    """启动已创建的爬取任务"""
+    try:
+        _service.start_crawl_task(task_id)
+        return jsonify({"status": "started", "task_id": task_id})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+@bp.route("/config/<task_id>", methods=["POST"])
+def update_config(task_id: str):
+    """更新任务配置（interval/max_pages/max_depth）"""
+    data = request.get_json(force=True) or {}
+    interval = data.get("interval")
+    max_pages = data.get("max_pages")
+    max_depth = data.get("max_depth")
+    
+    if interval: interval = float(interval)
+    if max_pages: max_pages = int(max_pages)
+    if max_depth: max_depth = int(max_depth)
+    
+    try:
+        _service.set_crawl_config(task_id, interval=interval, max_pages=max_pages, max_depth=max_depth)
+        return jsonify({"status": "updated"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+@bp.route("/pause/<task_id>", methods=["POST"])
+def pause(task_id: str):
+    """暂停爬取任务"""
+    try:
+        _service.pause_crawl_task(task_id)
+        return jsonify({"status": "paused", "task_id": task_id})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+@bp.route("/resume/<task_id>", methods=["POST"])
+def resume(task_id: str):
+    """恢复爬取任务"""
+    try:
+        _service.resume_crawl_task(task_id)
+        return jsonify({"status": "resumed", "task_id": task_id})
+    except Exception as e:
         return jsonify({"error": str(e)}), 400
 
 @bp.route("/stop/<task_id>", methods=["POST"])
@@ -96,6 +129,25 @@ def stop(task_id: str):
         return jsonify({"status": "stopping", "task_id": task_id})
     except Exception as e:
         return jsonify({"error": str(e)}), 400
+
+@bp.route("/queue/add", methods=["POST"])
+def add_url_to_queue():
+    """逐个添加URL到队列"""
+    data = request.get_json(force=True) or {}
+    task_id = data.get("task_id")
+    url = data.get("url")
+    priority = int(data.get("priority", 0))
+    depth = int(data.get("depth", 0))
+    
+    if not task_id or not url:
+        return jsonify({"error": "task_id and url are required"}), 400
+        
+    try:
+        _service.add_url(task_id, url, depth, priority)
+        return jsonify({"status": "added", "url": url})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
 
 @bp.route("/status/<task_id>", methods=["GET"])
 def status(task_id: str):
