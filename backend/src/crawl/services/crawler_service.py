@@ -26,6 +26,7 @@ from ..domain.demand_interface.i_url_queue import IUrlQueue
 from ..domain.entity.crawl_task import CrawlTask
 from ..domain.value_objects.crawl_status import TaskStatus
 from ..domain.value_objects.crawl_result import CrawlResult
+from ..domain.value_objects.crawl_config import CrawlConfig
 from src.shared.event_bus import EventBus
 
 
@@ -144,7 +145,7 @@ class CrawlerService:
                     max_depth=task.config.max_depth
                 )
         
-        # 5. 异步开始爬取循环：开启守护线程，避免阻塞调用方
+        # 4. 异步开始爬取循环：开启守护线程，避免阻塞调用方
         t = Thread(target=self._execute_crawl_loop, args=(task,), daemon=True)
         self._threads[task.id] = t
         t.start()
@@ -291,6 +292,9 @@ class CrawlerService:
                 continue
             
             # 4. 执行HTTP请求：包含重试/编码检测/错误处理
+            # 提前标记为已访问，表明正在处理或已处理，防止重复入队
+            task.mark_url_visited(url)
+            
             response = self._http.get(url)
             if not response.is_success:
                 task.record_crawl_error(url, f"请求失败: {response.error_message}", "RequestFailed")
@@ -323,8 +327,8 @@ class CrawlerService:
                 self._publish_domain_events(task)
                 pdf_links = []
             
-            # 8. 更新聚合根状态：记录已访问URL
-            task.mark_url_visited(url)
+            # 8. 更新聚合根状态：记录已访问URL (已提前移动到请求前)
+            # task.mark_url_visited(url)
             
             # 9. 创建并追加爬取结果：供外部查询显示
             result = CrawlResult(
@@ -340,6 +344,7 @@ class CrawlerService:
             
             # 使用新的方法添加结果并记录事件
             task.add_crawl_result(result, depth)
+
             
             # 发布积压的事件（如PageCrawledEvent）
             self._publish_domain_events(task)
@@ -359,7 +364,7 @@ class CrawlerService:
             # 11. 请求间隔控制 (Rate Limiting)
             time.sleep(task.config.request_interval)
         
-        # 11. 爬取完成或停止：根据停止标志或队列耗尽设置最终状态
+        # 12. 爬取完成或停止：根据停止标志或队列耗尽设置最终状态
         if task.id in self._stopped_tasks:
             task.stop_crawl()
         elif queue.is_empty() and task.status == TaskStatus.RUNNING:

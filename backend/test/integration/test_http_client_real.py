@@ -76,6 +76,15 @@ class TestRealGetRequests:
         assert response.is_success
         assert "TraeIntegrationTest" in response.content
 
+    def test_get_hacker_news(self, http_client):
+        """测试访问 Hacker News"""
+        url = "https://news.ycombinator.com/"
+        response = http_client.get(url)
+
+        assert response.is_success
+        assert response.status_code == 200
+        assert "Hacker News" in response.content
+
 # ============================================================================
 # 状态码与错误处理测试
 # ============================================================================

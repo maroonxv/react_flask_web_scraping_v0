@@ -21,6 +21,10 @@ from ..infrastructure.crawl_domain_service_impl import CrawlDomainServiceImpl  #
 from ..domain.entity.crawl_task import CrawlTask  # 领域实体：爬取任务聚合根
 from ..domain.value_objects.crawl_config import CrawlConfig  # 值对象：任务配置（策略/深度/速率等）
 from ..domain.value_objects.crawl_strategy import CrawlStrategy  # 值对象：枚举，BFS/DFS
+from src.shared.handlers.websocket_handler import WebSocketLoggingHandler
+from src.shared.event_handlers.websocket_handler import WebSocketEventHandler
+import logging
+from datetime import datetime
 
 bp = Blueprint("crawl", __name__, url_prefix="/api/crawl")
 
@@ -45,6 +49,74 @@ def inject_event_bus(event_bus):
     # 这是一个临时的注入方法，用于在应用启动后将 EventBus 传递给 Service
     # 更好的做法是使用依赖注入框架
     _service._event_bus = event_bus
+
+def init_realtime_logging(socketio, event_bus):
+    """
+    初始化实时日志能力（供应用启动时调用）
+    
+    调用此函数将：
+    1. 配置 WebSocketLoggingHandler，使技术日志（错误/性能）能推送到前端
+    2. 配置 WebSocketEventHandler，使业务日志（爬取进度）能推送到前端
+    """
+    # 1. 确保 Service 拥有 EventBus
+    if not hasattr(_service, '_event_bus') or _service._event_bus is None:
+        _service._event_bus = event_bus
+
+    # 2. 配置业务日志推送 (Domain Events -> WebSocket)
+    # 订阅 WebSocketEventHandler 到事件总线
+    ws_event_handler = WebSocketEventHandler(socketio)
+    event_bus.subscribe_to_all(ws_event_handler.handle)
+    
+    # 3. 配置技术日志推送 (Logger -> WebSocket)
+    # 获取技术日志 Logger
+    tech_loggers = [
+        logging.getLogger('infrastructure.error'),
+        logging.getLogger('infrastructure.perf')
+    ]
+    
+    # 创建 handler
+    ws_log_handler = WebSocketLoggingHandler(socketio)
+    # 设置简单格式，具体字段由 handler 内部处理
+    ws_log_handler.setFormatter(logging.Formatter('%(message)s'))
+    
+    for logger in tech_loggers:
+        # 避免重复添加 (如果 run.py 或 logging_config 已经添加过)
+        if not any(isinstance(h, WebSocketLoggingHandler) for h in logger.handlers):
+            logger.addHandler(ws_log_handler)
+
+@bp.route("/logs/test_broadcast", methods=["POST"])
+def test_broadcast_log():
+    """
+    [测试接口] 触发测试日志以验证实时推送功能
+    前端调用此接口后，应能在 WebSocket 的 'tech_log' 和 'crawl_log' 频道收到消息
+    """
+    try:
+        # 1. 触发一条技术错误日志 (推送到 tech_log)
+        error_logger = logging.getLogger('infrastructure.error')
+        error_logger.error("Test Error: Real-time log connection test", extra={'component': 'api_test'})
+        
+        # 2. 触发一条业务日志 (推送到 crawl_log)
+        # 尝试通过 EventBus 发布模拟事件
+        if hasattr(_service, '_event_bus') and _service._event_bus:
+            class MockEvent:
+                def __init__(self):
+                    self.event_type = "TEST_LOG"
+                    self.task_id = "system_test"
+                    self.data = {"message": "Test crawl log via EventBus"}
+                    self.timestamp = datetime.now()
+            
+            _service._event_bus.publish(MockEvent())
+        else:
+            # 备用：如果 EventBus 未连接，记录到 domain logger
+            domain_logger = logging.getLogger('domain.crawl_process')
+            domain_logger.info("Test Process: Crawl process active (EventBus not connected)", extra={'task_id': 'system_test'})
+        
+        return jsonify({
+            "status": "ok", 
+            "message": "Test logs broadcasted to WebSocket channels"
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @bp.route("/create", methods=["POST"])
 def create():

@@ -91,9 +91,10 @@ class CrawlDomainServiceImpl(ICrawlDomainService):
                 continue
             
             # 领域规则2: Content-Type 验证（准确路径）
-            response = self._http.head(link)
-            if response.content_type and 'application/pdf' in response.content_type:
-                pdf_links.append(link)
+            # 性能优化：暂时禁用对所有链接的 HEAD 请求，因为这会导致严重的性能问题（100+链接需要数分钟）
+            # response = self._http.head(link)
+            # if response.content_type and 'application/pdf' in response.content_type:
+            #    pdf_links.append(link)
         
         return pdf_links
 

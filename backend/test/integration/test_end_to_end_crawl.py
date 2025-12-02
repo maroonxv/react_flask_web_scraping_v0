@@ -7,32 +7,57 @@ import sys
 import os
 
 # Add backend to path
-current_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.dirname(os.path.dirname(os.path.dirname(current_dir)))
-sys.path.insert(0, project_root)
+# 获取当前文件的绝对路径
+current_file_path = os.path.abspath(__file__)
+# 获取 test 目录
+test_dir = os.path.dirname(os.path.dirname(current_file_path))
+# 获取 backend 目录
+backend_dir = os.path.dirname(test_dir)
+# 获取项目根目录 (scraping_app_v0)
+project_root = os.path.dirname(backend_dir)
 
-from backend.src.crawl.services.crawler_service import CrawlerService
-from backend.src.crawl.domain.value_objects.crawl_config import CrawlConfig
-from backend.src.crawl.domain.value_objects.crawl_strategy import CrawlStrategy
-from backend.src.crawl.domain.value_objects.crawl_status import TaskStatus
-from backend.src.crawl.infrastructure.url_queue_impl import UrlQueueImpl
-from backend.src.shared.event_bus import EventBus
-from backend.src.crawl.domain.demand_interface.i_http_client import IHttpClient
-from backend.src.crawl.domain.demand_interface.i_url_queue import IUrlQueue
-from backend.src.crawl.domain.domain_service.i_crawl_domain_service import ICrawlDomainService
+# 将 backend 目录添加到 sys.path，以便可以直接导入 src
+if backend_dir not in sys.path:
+    sys.path.insert(0, backend_dir)
+
+from src.crawl.services.crawler_service import CrawlerService
+from src.crawl.domain.value_objects.crawl_config import CrawlConfig
+from src.crawl.domain.value_objects.crawl_strategy import CrawlStrategy
+from src.crawl.domain.value_objects.crawl_status import TaskStatus
+from src.crawl.infrastructure.url_queue_impl import UrlQueueImpl
+from src.shared.event_bus import EventBus
+from src.crawl.domain.demand_interface.i_http_client import IHttpClient
+from src.crawl.domain.value_objects.http_response import HttpResponse
+from src.crawl.domain.demand_interface.i_url_queue import IUrlQueue
+from src.crawl.domain.domain_service.i_crawl_domain_service import ICrawlDomainService
+from src.crawl.infrastructure.http_client_impl import HttpClientImpl
 
 # Mock实现，用于隔离网络和复杂依赖
 class MockHttpClient(IHttpClient):
-    def __init__(self):
-        self.get_count = 0
+    def get(self, url: str, headers=None) -> HttpResponse:
+        return HttpResponse(
+            url=url,
+            status_code=200,
+            headers={"Content-Type": "text/html"},
+            content="<html><body>Mock Content</body></html>",
+            content_type="text/html",
+            is_success=True,
+            error_message=None
+        )
         
-    def get(self, url: str, **kwargs):
-        self.get_count += 1
-        mock_response = MagicMock()
-        mock_response.is_success = True
-        mock_response.status_code = 200
-        mock_response.content = b"<html><body><a href='https://news.ycombinator.com/item?id=123'>Link</a></body></html>"
-        return mock_response
+    def head(self, url: str) -> HttpResponse:
+        return HttpResponse(
+            url=url,
+            status_code=200,
+            headers={"Content-Type": "text/html"},
+            content="",
+            content_type="text/html",
+            is_success=True,
+            error_message=None
+        )
+    
+    def close(self):
+        pass
 
 class MockCrawlDomainService(ICrawlDomainService):
     def extract_page_metadata(self, content, url):
@@ -47,7 +72,13 @@ class MockCrawlDomainService(ICrawlDomainService):
     def discover_crawlable_links(self, content, url, task):
         # 模拟发现链接
         if "ycombinator.com" in url:
-            return ["https://news.ycombinator.com/item?id=123", "https://news.ycombinator.com/item?id=456"]
+            # Generate dynamic links to ensure we have enough content to crawl
+            import hashlib
+            base_hash = int(hashlib.md5(url.encode()).hexdigest(), 16)
+            return [
+                f"https://news.ycombinator.com/item?id={base_hash % 100000}",
+                f"https://news.ycombinator.com/item?id={(base_hash + 1) % 100000}"
+            ]
         return []
 
     def identify_pdf_links(self, links):
@@ -55,6 +86,7 @@ class MockCrawlDomainService(ICrawlDomainService):
 
 @pytest.fixture
 def crawler_service():
+    # 使用 Mock HttpClientImpl
     http_client = MockHttpClient()
     domain_service = MockCrawlDomainService()
     event_bus = EventBus()
@@ -73,11 +105,11 @@ def test_end_to_end_crawl_lifecycle(crawler_service):
     """
     # 1. 初始化爬取任务
     config = CrawlConfig(
-        start_urls=["https://news.ycombinator.com/"],
+        start_url="https://news.ycombinator.com/",
         strategy=CrawlStrategy.BFS,
-        max_depth=2,
-        max_pages=10,
-        request_interval=0.1, # 快速测试
+        max_depth=10,
+        max_pages=50,
+        request_interval=0.2, # 慢一点，避免测试过快结束
         allow_domains=["ycombinator.com"]
     )
     

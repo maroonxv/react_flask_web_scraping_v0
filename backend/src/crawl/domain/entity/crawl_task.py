@@ -12,6 +12,8 @@ from ..domain_event.task_life_cycle_event import (
 )
 from ..domain_event.crawl_process_event import PageCrawledEvent, CrawlErrorEvent
 
+from ..value_objects.crawl_strategy import CrawlStrategy
+
 @dataclass
 class CrawlTask:
     """

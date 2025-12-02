@@ -10,26 +10,38 @@ class EventBus:
     
     def __init__(self):
         self._handlers: Dict[str, List[Callable]] = {}
+        self._global_handlers: List[Callable] = []
         self._logger = logging.getLogger(__name__)
     
     def subscribe(self, event_type: str, handler: Callable) -> None:
-        """订阅事件"""
+        """订阅特定事件"""
         if event_type not in self._handlers:
             self._handlers[event_type] = []
         
         self._handlers[event_type].append(handler)
         self._logger.debug(f"订阅事件: {event_type}")
+
+    def subscribe_to_all(self, handler: Callable) -> None:
+        """订阅所有事件（全局监听）"""
+        self._global_handlers.append(handler)
+        self._logger.debug(f"订阅所有事件: {handler}")
     
     def publish(self, event) -> None:
         """发布事件"""
+        # 1. 调用特定事件的处理器
         handlers = self._handlers.get(event.event_type, [])
-        
         for handler in handlers:
             try:
-                # 这里的handler是一个具体的事件处理函数，如LoggingEventHandler.handle
                 handler(event)
             except Exception as e:
                 self._logger.error(f"事件处理失败: {event.event_type} - {str(e)}")
+        
+        # 2. 调用全局处理器
+        for handler in self._global_handlers:
+            try:
+                handler(event)
+            except Exception as e:
+                self._logger.error(f"全局事件处理失败: {event.event_type} - {str(e)}")
     
     def unsubscribe(self, event_type: str, handler: Callable) -> None:
         """取消订阅"""
