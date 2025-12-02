@@ -51,4 +51,4 @@ init_realtime_logging(socketio, event_bus)
 
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+    socketio.run(app, debug=True, port=5000)

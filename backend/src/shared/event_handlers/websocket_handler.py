@@ -79,14 +79,14 @@ class WebSocketEventHandler(BaseEventHandler):
         data = event.data
         
         # 根据事件类型提取进度信息
-        if event_type == "PAGE_CRAWLED":
+        if event_type == "PAGE_CRAWLED" or event_type == "PageCrawledEvent":
             return {
                 "current_depth": data.get('depth', 0),
                 "pages_crawled": data.get('pages_crawled', 0),  # 如果事件包含累计数
                 "pdfs_found": data.get('pdfs_found', 0)
             }
         
-        elif event_type == "CRAWL_COMPLETED":
+        elif event_type == "CRAWL_COMPLETED" or event_type == "TaskCompletedEvent" or event_type == "CRAWL_COMPLETED":
             return {
                 "total_pages": data.get('total_pages', 0),
                 "total_pdfs": data.get('total_pdfs', 0),
@@ -94,7 +94,7 @@ class WebSocketEventHandler(BaseEventHandler):
                 "status": "completed"
             }
         
-        elif event_type == "CRAWL_ERROR":
+        elif event_type == "CRAWL_ERROR" or event_type == "TaskFailedEvent":
             return {
                 "error_count": data.get('error_count', 1),
                 "status": "error"

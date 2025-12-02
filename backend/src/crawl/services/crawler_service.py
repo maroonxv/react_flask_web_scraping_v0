@@ -77,12 +77,13 @@ class CrawlerService:
 
 # -------------------- 爬取任务生命周期管理 --------------------
 
-    def create_crawl_task(self, config: CrawlConfig) -> str:
+    def create_crawl_task(self, config: CrawlConfig, name: str = None) -> str:
         """
         创建爬取任务（不自动启动）
         
         参数:
             config: 任务配置对象
+            name: 任务名称
             
         返回:
             task_id
@@ -92,7 +93,7 @@ class CrawlerService:
         task_id = str(uuid.uuid4())
         
         # 创建聚合根
-        task = CrawlTask(id=task_id, config=config)
+        task = CrawlTask(id=task_id, config=config, name=name)
         
         # 初始化该任务的专属URL队列
         # 重构：每个任务拥有独立的UrlQueueImpl实例
@@ -240,6 +241,7 @@ class CrawlerService:
         
         return {
             "task_id": task.id,
+            "name": task.name,  # Added name
             "status": task.status.value,
             # 注意：实体中维护了去重集合 _visited_urls
             "visited_count": len(task.visited_urls),

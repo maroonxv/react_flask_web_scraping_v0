@@ -20,6 +20,7 @@ class CrawlTask:
     爬取任务实体类，作为聚合根
     """
     id: str
+    name: str  # Added name field
     config: CrawlConfig
     status: TaskStatus = TaskStatus.PENDING
     results: List[CrawlResult] = field(default_factory=list)
@@ -31,8 +32,9 @@ class CrawlTask:
     _life_cycle_events: List[DomainEvent] = field(default_factory=list)
 
 
-    def __init__(self, id: str, config: CrawlConfig):
+    def __init__(self, id: str, config: CrawlConfig, name: str = None):
         self.id = id
+        self.name = name or id  # Default to id if name not provided
         self.config = config
         self.status = TaskStatus.PENDING
         self.results = []

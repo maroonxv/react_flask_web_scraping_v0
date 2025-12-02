@@ -128,6 +128,7 @@ def create():
     max_pages = int(data.get("max_pages", 100))
     interval = float(data.get("interval", 1.0))
     allow_domains = data.get("allow_domains", [])
+    name = data.get("name")  # Extract name
 
     if not start_url:
         return jsonify({"error": "start_url is required"}), 400
@@ -142,7 +143,7 @@ def create():
             allow_domains=allow_domains,
         )
         
-        task_id = _service.create_crawl_task(config)
+        task_id = _service.create_crawl_task(config, name=name)
         return jsonify({"task_id": task_id}), 201
     except Exception as e:
         return jsonify({"error": str(e)}), 400
