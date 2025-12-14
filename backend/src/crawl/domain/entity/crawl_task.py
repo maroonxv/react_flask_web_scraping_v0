@@ -197,7 +197,11 @@ class CrawlTask:
             title=result.title,
             depth=depth,
             status_code=200, # 假设成功
-            pdf_count=len(result.pdf_links)
+            pdf_count=len(result.pdf_links),
+            author=result.author,
+            abstract=result.abstract,
+            keywords=result.keywords,
+            publish_date=result.publish_date
         ))
 
     def record_crawl_error(self, url: str, error_message: str, error_type: str = "GeneralError"):

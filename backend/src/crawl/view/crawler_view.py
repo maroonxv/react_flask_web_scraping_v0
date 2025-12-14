@@ -238,11 +238,13 @@ def results(task_id: str):
     """查询任务的最新结果列表"""
     try:
         results = _service.get_task_results(task_id)
-        # 将结果对象转换为字典列表
         return jsonify([
             {
                 "url": r.url,
                 "title": r.title,
+                "author": r.author,
+                "abstract": r.abstract,
+                "keywords": r.keywords,
                 "crawled_at": r.crawled_at.isoformat() if r.crawled_at else None,
                 "pdf_count": len(r.pdf_links)
             } 

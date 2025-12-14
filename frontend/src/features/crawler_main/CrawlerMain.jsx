@@ -34,7 +34,7 @@ const LogViewer = ({ taskId, logs }) => {
             <div className="log-content custom-scrollbar">
                 {logs.length === 0 ? <p className="no-data">等待日志...</p> : logs.map((log, index) => (
                     <div key={index} className={`log-entry ${log.level?.toLowerCase()} ${log.category}`}>
-                        <span className="log-time">{new Date(log.timestamp).toLocaleTimeString()}</span>
+                        <span className="log-time">{log.timestamp}</span>
                         <span className="log-level">[{log.level}]</span>
                         <span className="log-category">[{log.category || 'general'}]</span>
                         <span className="log-message">{log.message}</span>
@@ -70,7 +70,10 @@ const ResultViewer = ({ results }) => {
                     <thead>
                         <tr>
                             <th>标题</th>
+                            <th>作者</th>
                             <th>URL</th>
+                            <th>摘要</th>
+                            <th>关键词</th>
                             <th>时间</th>
                             <th>PDF数量</th>
                         </tr>
@@ -79,7 +82,10 @@ const ResultViewer = ({ results }) => {
                         {results.map((res, idx) => (
                             <tr key={idx}>
                                 <td title={res.title}>{res.title || '-'}</td>
+                                <td title={res.author}>{res.author || '-'}</td>
                                 <td><a href={res.url} target="_blank" rel="noopener noreferrer" title={res.url}>{res.url}</a></td>
+                                <td title={res.abstract} className="truncate-cell">{res.abstract || '-'}</td>
+                                <td title={res.keywords ? res.keywords.join(', ') : ''}>{res.keywords ? res.keywords.join(', ') : '-'}</td>
                                 <td>{new Date(res.crawled_at).toLocaleTimeString()}</td>
                                 <td>{res.pdf_count}</td>
                             </tr>
@@ -120,7 +126,7 @@ const CrawlerMain = () => {
 
     const socketRef = useRef(null);
 
-    // 初始化 WebSocket
+    // 初始化 WebSocket（只在组件挂载时执行一次）
     useEffect(() => {
         socketRef.current = io(SOCKET_URL);
 
@@ -130,17 +136,41 @@ const CrawlerMain = () => {
 
         socketRef.current.on('crawl_log', (data) => {
             // 业务日志 (room=taskId)
-            const { task_id } = data;
+            const { task_id, event_type, data: eventData } = data;
             if (task_id) {
                 setLogs(prev => ({
                     ...prev,
                     [task_id]: [...(prev[task_id] || []), data]
                 }));
+
+                // Real-time result update
+                if (event_type === 'PageCrawledEvent' || event_type === 'PAGE_CRAWLED') {
+                    const newResult = {
+                        title: eventData.title,
+                        url: eventData.url,
+                        crawled_at: data.timestamp,
+                        pdf_count: eventData.pdf_count,
+                        author: eventData.author,
+                        abstract: eventData.abstract,
+                        keywords: eventData.keywords
+                    };
+                    
+                    setResults(prev => {
+                        const currentResults = prev[task_id] || [];
+                        // Check for duplicates based on URL to avoid list growing indefinitely with same items if re-emitted
+                        if (currentResults.some(r => r.url === newResult.url)) {
+                             return prev;
+                        }
+                        return {
+                            ...prev,
+                            [task_id]: [...currentResults, newResult]
+                        };
+                    });
+                }
             }
         });
 
         socketRef.current.on('tech_log', (data) => {
-            // 技术日志 (广播) - 关联到 runningTaskId
             if (runningTaskId) {
                 setLogs(prev => ({
                     ...prev,
@@ -156,7 +186,7 @@ const CrawlerMain = () => {
         return () => {
             if (socketRef.current) socketRef.current.disconnect();
         };
-    }, [runningTaskId]);
+    }, []);
 
     // 监听选中任务变化，自动加入房间
     useEffect(() => {
@@ -185,6 +215,11 @@ const CrawlerMain = () => {
             const res = await axios.get(`${API_BASE_URL}/status/${taskId}`);
             const statusData = res.data;
             setTaskStatuses(prev => ({ ...prev, [taskId]: statusData }));
+
+            const currentResultCount = results[taskId]?.length || 0;
+            if (statusData.result_count > currentResultCount) {
+                await fetchResults(taskId);
+            }
 
             // 更新 runningTaskId 状态
             if (statusData.status === TASK_STATUS.RUNNING) {

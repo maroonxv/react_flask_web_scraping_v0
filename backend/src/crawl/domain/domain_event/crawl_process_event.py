@@ -10,6 +10,11 @@ class PageCrawledEvent(DomainEvent):
     depth: int
     status_code: int
     pdf_count: int = 0
+    # Added fields for result display
+    author: str = None
+    abstract: str = None
+    keywords: List[str] = field(default_factory=list)
+    publish_date: str = None
 
 @dataclass
 class PdfFoundEvent(DomainEvent):

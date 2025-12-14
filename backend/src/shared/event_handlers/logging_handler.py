@@ -9,6 +9,7 @@ from datetime import datetime
 from pythonjsonlogger import jsonlogger
 from .base_event_handler import BaseEventHandler
 from src.shared.domain.events import DomainEvent
+from src.shared.handlers.logging_handler import DailyRotatingFileHandler
 
 class LoggingEventHandler(BaseEventHandler):
     """
@@ -38,16 +39,12 @@ class LoggingEventHandler(BaseEventHandler):
         self.log_dir = self.backend_dir / 'logs'
         self.log_dir.mkdir(parents=True, exist_ok=True)
 
-        self.log_handler = logging.handlers.TimedRotatingFileHandler(
-            filename=str(self.log_dir / 'crawler_log.log'),  # 基础文件名
-            when='MIDNIGHT',         # 每天午夜切换
-            interval=1,              # 间隔1天
-            backupCount=30,          # 保留30天的日志
-            encoding='utf-8'
+        self.log_handler = DailyRotatingFileHandler(
+            log_dir=str(self.log_dir),
+            file_name_suffix='crawler_log.log',
+            backup_count=30,
+            use_date_prefix=False
         )
-
-        # 自定义备份文件的命名规则
-        self.log_handler.namer = self._custom_namer
 
         self.log_handler.setFormatter(
             jsonlogger.JsonFormatter(
@@ -60,26 +57,6 @@ class LoggingEventHandler(BaseEventHandler):
             self._logger.addHandler(self.log_handler)
 
 
-    def _custom_namer(self, default_name):
-        """
-        自定义日志文件命名
-        默认名称格式：crawler_log.log.2025-11-30
-        转换为：2025-11-30_crawler_log.log
-        """
-        # 提取日期部分（默认格式的最后部分）
-        dir_name, base_name = Path(default_name).parent, Path(default_name).name
-        
-        # 提取日期后缀（如 .2025-11-30）
-        if '.' in base_name:
-            parts = base_name.split('.')
-            if len(parts) >= 3:
-                date_suffix = parts[-1]  # 获取日期部分
-                # 重新组合为：日期_crawler_log.log
-                new_name = f"{date_suffix}_crawler_log.log"
-                return str(dir_name / new_name)
-        
-        return default_name
-    
 # -------------------- 最重要的方法：将事件转换为日志格式并存储 --------------------
 
     def handle(self, event: DomainEvent) -> None:

@@ -346,7 +346,6 @@ class CrawlerService:
             
             # 使用新的方法添加结果并记录事件
             task.add_crawl_result(result, depth)
-
             
             # 发布积压的事件（如PageCrawledEvent）
             self._publish_domain_events(task)

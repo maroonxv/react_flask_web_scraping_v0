@@ -13,7 +13,7 @@ class DailyRotatingFileHandler(logging.handlers.TimedRotatingFileHandler):
     3. 使用 {Date}_{Name}.log 的命名格式（支持轮转）
     """
     
-    def __init__(self, log_dir: str, file_name_suffix: str, backup_count: int = 30):
+    def __init__(self, log_dir: str, file_name_suffix: str, backup_count: int = 30, use_date_prefix: bool = True):
         """
         初始化
         
@@ -21,14 +21,18 @@ class DailyRotatingFileHandler(logging.handlers.TimedRotatingFileHandler):
             log_dir: 日志存放目录 (e.g. "backend/logs/error")
             file_name_suffix: 日志文件名后缀 (e.g. "error.log")
             backup_count: 保留天数
+            use_date_prefix: 是否在文件名中添加日期前缀 (默认为 True)
         """
         # 确保目录存在
         self.log_dir_path = Path(log_dir)
         self.log_dir_path.mkdir(parents=True, exist_ok=True)
         
-        # 构造初始文件名: {Today}_{Suffix}
-        today = datetime.now().strftime('%Y-%m-%d')
-        filename = self.log_dir_path / f"{today}_{file_name_suffix}"
+        # 构造初始文件名
+        if use_date_prefix:
+            today = datetime.now().strftime('%Y-%m-%d')
+            filename = self.log_dir_path / f"{today}_{file_name_suffix}"
+        else:
+            filename = self.log_dir_path / file_name_suffix
         
         super().__init__(
             filename=str(filename),
@@ -69,3 +73,20 @@ class DailyRotatingFileHandler(logging.handlers.TimedRotatingFileHandler):
                 return str(dir_name / new_name)
         
         return default_name
+
+    def doRollover(self):
+        """
+        重写 doRollover 以解决 Windows 下的文件占用问题
+        """
+        try:
+            super().doRollover()
+        except (PermissionError, OSError):
+            # Windows 下如果文件被占用，轮转会失败
+            # 这种情况下，我们选择跳过轮转，继续写入当前文件
+            # 必须重新打开流，因为 super().doRollover() 可能已经关闭了它
+            if self.stream:
+                self.stream.close()
+                self.stream = None
+            if not self.delay:
+                self.stream = self._open()
+
