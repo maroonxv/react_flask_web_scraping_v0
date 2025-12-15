@@ -10,8 +10,10 @@
 - 组合根在模块级创建单例以便简化演示；生产实践可改为依赖注入容器或应用工厂内组装。
 """
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, send_file
 import uuid
+import pandas as pd
+from io import BytesIO
 from ..services.crawler_service import CrawlerService  # 应用层：负责任务编排、异步调度、状态查询
 from ..infrastructure.http_client_impl import HttpClientImpl  # 基础设施：requests 封装的 HTTP 客户端
 from ..infrastructure.html_parser_impl import HtmlParserImpl  # 基础设施：BeautifulSoup 封装的 HTML 解析器
@@ -231,7 +233,50 @@ def status(task_id: str):
     # - result_count: 提取到的页面结果数量
     # - queue_size: 当前队列长度
     # - current_depth: 当前处理的队列深度
-    return jsonify(_service.get_task_status(task_id))
+    status_data = _service.get_task_status(task_id)
+    if "error" in status_data:
+        return jsonify(status_data), 404
+        
+    return jsonify(status_data)
+
+@bp.route("/export/<task_id>", methods=["GET"])
+def export_results(task_id):
+    """导出任务结果为 Excel 文件"""
+    results = _service.get_task_results(task_id)
+    if not results:
+        return jsonify({"error": "No results found or task does not exist"}), 404
+    
+    # Convert results to list of dicts
+    data = []
+    for res in results:
+        data.append({
+            "Title": res.title,
+            "URL": res.url,
+            "Author": res.author,
+            "Abstract": res.abstract,
+            "Keywords": ", ".join(res.keywords) if res.keywords else "",
+            "Publish Date": res.publish_date,
+            "PDF Count": len(res.pdf_links) if res.pdf_links else 0,
+            "PDF Links": ", ".join(res.pdf_links) if res.pdf_links else "",
+            "Crawled At": res.crawled_at
+        })
+    
+    df = pd.DataFrame(data)
+    
+    output = BytesIO()
+    # Use xlsxwriter engine for better compatibility, or default openpyxl
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='Results')
+    
+    output.seek(0)
+    
+    filename = f"crawl_results_{task_id}.xlsx"
+    return send_file(
+        output,
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        as_attachment=True,
+        download_name=filename
+    )
 
 @bp.route("/results/<task_id>", methods=["GET"])
 def results(task_id: str):

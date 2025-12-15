@@ -50,7 +50,34 @@ const LogViewer = ({ taskId, logs }) => {
 };
 
 // 组件：结果查看器
-const ResultViewer = ({ results }) => {
+const ResultViewer = ({ taskId, results }) => {
+    const resultEndRef = useRef(null);
+
+    useEffect(() => {
+        resultEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }, [results]);
+
+    const handleExport = async () => {
+        if (!taskId) return;
+        try {
+            const response = await axios.get(`${API_BASE_URL}/export/${taskId}`, {
+                responseType: 'blob',
+            });
+            
+            const url = window.URL.createObjectURL(new Blob([response.data]));
+            const link = document.createElement('a');
+            link.href = url;
+            link.setAttribute('download', `crawl_results_${taskId}.xlsx`);
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            window.URL.revokeObjectURL(url);
+        } catch (err) {
+            console.error("Export error:", err);
+            alert("导出失败，请稍后重试。");
+        }
+    };
+
     if (!results || results.length === 0) return (
         <div className="result-viewer glass-panel">
             <div className="panel-header">
@@ -64,6 +91,9 @@ const ResultViewer = ({ results }) => {
         <div className="result-viewer glass-panel">
             <div className="panel-header">
                 <h3><i className="fas fa-table"></i> 结果 ({results.length})</h3>
+                <button className="action-btn primary small" onClick={handleExport} title="导出 Excel">
+                    <i className="fas fa-download"></i> 导出
+                </button>
             </div>
             <div className="table-container custom-scrollbar">
                 <table>
@@ -92,6 +122,7 @@ const ResultViewer = ({ results }) => {
                         ))}
                     </tbody>
                 </table>
+                <div ref={resultEndRef} />
             </div>
         </div>
     );
@@ -105,6 +136,7 @@ const CrawlerMain = () => {
     const [logs, setLogs] = useState({}); // { taskId: [logs] }
     const [results, setResults] = useState({}); // { taskId: [results] }
     const [taskStatuses, setTaskStatuses] = useState({}); // { taskId: status }
+    const [viewMode, setViewMode] = useState('logs'); // 'logs' or 'results'
 
     // 创建任务表单状态
     const [formData, setFormData] = useState({
@@ -209,6 +241,22 @@ const CrawlerMain = () => {
 
         return () => clearInterval(intervalId);
     }, [selectedTaskId, runningTaskId]);
+
+    // 当选中任务且处于暂停状态时，同步配置到编辑表单
+    useEffect(() => {
+        if (selectedTaskId && tasks.length > 0) {
+            const currentTask = tasks.find(t => t.id === selectedTaskId);
+            // 只要切换任务，或者任务状态变为暂停，就尝试更新编辑表单的默认值
+            // 这里我们不仅在暂停时更新，选中任务时也更新，以便用户查看当前配置
+            if (currentTask && currentTask.config) {
+                setEditConfig({
+                    interval: currentTask.config.interval || 1.0,
+                    max_pages: currentTask.config.max_pages || 100,
+                    max_depth: currentTask.config.max_depth || 3
+                });
+            }
+        }
+    }, [selectedTaskId, tasks]);
 
     const fetchStatus = async (taskId) => {
         try {
@@ -339,6 +387,14 @@ const CrawlerMain = () => {
     const handleUpdateConfig = async (taskId) => {
         try {
             await axios.post(`${API_BASE_URL}/config/${taskId}`, editConfig);
+            
+            // Update local tasks state to reflect changes immediately
+            setTasks(prevTasks => prevTasks.map(t => 
+                t.id === taskId 
+                    ? { ...t, config: { ...t.config, ...editConfig } }
+                    : t
+            ));
+
             alert("配置已更新!");
         } catch (err) {
             alert(`更新失败: ${err.message}`);
@@ -494,6 +550,21 @@ const CrawlerMain = () => {
                             <button className="control-btn stop" onClick={() => handleStop(selectedTaskId)} disabled={[TASK_STATUS.STOPPED, TASK_STATUS.COMPLETED, TASK_STATUS.FAILED].includes(currentStatus?.status)}>
                                 <i className="fas fa-stop"></i> 停止
                             </button>
+                            
+                            <div className="view-toggles">
+                                <button 
+                                    className={`view-btn ${viewMode === 'logs' ? 'active' : ''}`} 
+                                    onClick={() => setViewMode('logs')}
+                                >
+                                    <i className="fas fa-terminal"></i> 日志
+                                </button>
+                                <button 
+                                    className={`view-btn ${viewMode === 'results' ? 'active' : ''}`} 
+                                    onClick={() => setViewMode('results')}
+                                >
+                                    <i className="fas fa-table"></i> 结果
+                                </button>
+                            </div>
                         </div>
 
                         {isPaused && (
@@ -529,9 +600,12 @@ const CrawlerMain = () => {
                             </div>
                         )}
 
-                        <div className="dashboard-grid">
-                            <LogViewer taskId={selectedTaskId} logs={logs[selectedTaskId] || []} />
-                            <ResultViewer results={results[selectedTaskId]} />
+                        <div className="dashboard-content-wrapper">
+                            {viewMode === 'logs' ? (
+                                <LogViewer taskId={selectedTaskId} logs={logs[selectedTaskId] || []} />
+                            ) : (
+                                <ResultViewer taskId={selectedTaskId} results={results[selectedTaskId]} />
+                            )}
                         </div>
                     </div>
                 )}
