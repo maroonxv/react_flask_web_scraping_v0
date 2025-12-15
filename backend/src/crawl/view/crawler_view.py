@@ -130,6 +130,7 @@ def create():
     max_pages = int(data.get("max_pages", 100))
     interval = float(data.get("interval", 1.0))
     allow_domains = data.get("allow_domains", [])
+    priority_domains = data.get("priority_domains", [])
     name = data.get("name")  # Extract name
 
     if not start_url:
@@ -143,6 +144,7 @@ def create():
             max_pages=max_pages,
             request_interval=interval,
             allow_domains=allow_domains,
+            priority_domains=priority_domains,
         )
         
         task_id = _service.create_crawl_task(config, name=name)
@@ -252,6 +254,7 @@ def export_results(task_id):
         data.append({
             "Title": res.title,
             "URL": res.url,
+            "Depth": res.depth,
             "Author": res.author,
             "Abstract": res.abstract,
             "Keywords": ", ".join(res.keywords) if res.keywords else "",
@@ -287,11 +290,13 @@ def results(task_id: str):
             {
                 "url": r.url,
                 "title": r.title,
+                "depth": r.depth,
                 "author": r.author,
                 "abstract": r.abstract,
                 "keywords": r.keywords,
                 "crawled_at": r.crawled_at.isoformat() if r.crawled_at else None,
-                "pdf_count": len(r.pdf_links)
+                "pdf_count": len(r.pdf_links),
+                "tags": r.tags
             } 
             for r in results
         ])

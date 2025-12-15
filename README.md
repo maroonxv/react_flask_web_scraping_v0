@@ -26,3 +26,33 @@ crawl的源码按照领域驱动开发的原则进行组织
 后端的测试已经写得比较完善了，有单元测试和集成测试。
 单元测试包括对于 infrastructure 层的 http_client_impl.py、html_parser_impl.py、robots_txt_parser_impl.py、url_queue_impl.py的测试
 集成测试包括
+
+
+### 推荐方案：ToScrape 沙盒（最佳效果）
+这个网站有两个清晰的子站（书店和名言），非常适合模拟“从入口发现多个站点，并优先爬取其中一个”的场景。
+
+- 入口 URL : http://toscrape.com
+- 子站 A : books.toscrape.com
+- 子站 B : quotes.toscrape.com
+测试配置建议：
+
+1. 起始 URL : http://toscrape.com
+2. 允许的域名 : toscrape.com, books.toscrape.com, quotes.toscrape.com
+3. 大站优先域名 : books.toscrape.com （您可以填这个，验证是否书店的页面会被优先抓取并打上 ⭐）
+### 备选方案 1：Crawler Test
+这是您默认配置中的网站，它包含各种链接测试。
+
+- 入口 URL : https://crawler-test.com/
+- 测试方法 : 这个网站有很多子页面。您可以随便挑一个二级路径作为“大站”来测试正则匹配（虽然它是单域名，但在我们的逻辑里，通常是匹配域名后缀。如果我们的逻辑严格匹配域名，这个可能不太好测“跨站”优先级，除非它有外链）。
+  - 注：由于我们的逻辑是匹配 priority_domains （域名），对于单域名的网站，大站策略可能无法区分同域名下的不同路径。因此强烈建议使用上面的 ToScrape 方案。
+### 备选方案 2：Scrape This Site
+另一个流行的练习场。
+
+- 入口 URL : https://www.scrapethissite.com/
+- 特点 : 包含“Sandbox”和“Lessons”等不同板块。
+### 总结
+为了最直观地看到**⭐图标 和 优先调度**的效果，请使用 ToScrape 组合：
+
+- Start URL : http://toscrape.com
+- Allow Domains : toscrape.com, books.toscrape.com, quotes.toscrape.com
+- Priority Domains : books.toscrape.com

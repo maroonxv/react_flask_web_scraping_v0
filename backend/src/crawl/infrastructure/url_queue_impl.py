@@ -22,8 +22,8 @@ class UrlQueueImpl(IUrlQueue):
     
     def initialize(self, start_url: str, strategy: str, max_depth: int = 3) -> None:
         """初始化队列"""
-        if strategy not in ["BFS", "DFS", "PRIORITY"]:
-            raise ValueError(f"不支持的策略: {strategy}，仅支持 BFS/DFS/PRIORITY")
+        if strategy not in ["BFS", "DFS", "PRIORITY", "BIG_SITE_FIRST"]:
+            raise ValueError(f"不支持的策略: {strategy}，仅支持 BFS/DFS/PRIORITY/BIG_SITE_FIRST")
         
         self._strategy = strategy
         self._max_depth = max_depth
@@ -49,7 +49,7 @@ class UrlQueueImpl(IUrlQueue):
         elif self._strategy == "DFS":
             self._dfs_stack.append(queued_url)
         
-        elif self._strategy == "PRIORITY":
+        elif self._strategy in ["PRIORITY", "BIG_SITE_FIRST"]:
             # 使用负优先级实现最大堆(Python的heapq是最小堆)
             # 同时使用counter保证相同优先级时按插入顺序
             heapq.heappush(
@@ -71,7 +71,7 @@ class UrlQueueImpl(IUrlQueue):
                 if self._dfs_stack:
                     queued_url = self._dfs_stack.pop()
             
-            elif self._strategy == "PRIORITY":
+            elif self._strategy in ["PRIORITY", "BIG_SITE_FIRST"]:
                 if self._priority_heap:
                     _, _, queued_url = heapq.heappop(self._priority_heap)
             
@@ -89,7 +89,7 @@ class UrlQueueImpl(IUrlQueue):
             return len(self._bfs_queue) == 0
         elif self._strategy == "DFS":
             return len(self._dfs_stack) == 0
-        elif self._strategy == "PRIORITY":
+        elif self._strategy in ["PRIORITY", "BIG_SITE_FIRST"]:
             return len(self._priority_heap) == 0
         return True
     
@@ -99,7 +99,7 @@ class UrlQueueImpl(IUrlQueue):
             return len(self._bfs_queue)
         elif self._strategy == "DFS":
             return len(self._dfs_stack)
-        elif self._strategy == "PRIORITY":
+        elif self._strategy in ["PRIORITY", "BIG_SITE_FIRST"]:
             return len(self._priority_heap)
         return 0
     

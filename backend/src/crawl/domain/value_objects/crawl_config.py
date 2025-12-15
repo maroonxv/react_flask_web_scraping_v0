@@ -10,6 +10,7 @@ class CrawlConfig:
     max_pages: int = 100
     request_interval: float = 1.0  # 这个参数控制请求间隔，实现爬取速率控制
     allow_domains: List[str] = field(default_factory=list)
+    priority_domains: List[str] = field(default_factory=list)
 
     def __post_init__(self):
         """

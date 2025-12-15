@@ -771,3 +771,12 @@ td {
 .control-btn.stop:hover:not(:disabled) {
     background: rgba(248, 113, 113, 0.2);
 }
+
+/* 高亮大站结果 */
+.highlight-row {
+    background-color: rgba(255, 215, 0, 0.1) !important;
+    border-left: 3px solid #ffd700;
+}
+.highlight-row:hover {
+    background-color: rgba(255, 215, 0, 0.2) !important;
+}

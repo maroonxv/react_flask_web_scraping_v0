@@ -25,6 +25,7 @@ from ..domain.demand_interface.i_http_client import IHttpClient
 from ..domain.demand_interface.i_url_queue import IUrlQueue
 from ..domain.entity.crawl_task import CrawlTask
 from ..domain.value_objects.crawl_status import TaskStatus
+from ..domain.value_objects.crawl_strategy import CrawlStrategy
 from ..domain.value_objects.crawl_result import CrawlResult
 from ..domain.value_objects.crawl_config import CrawlConfig
 from src.shared.event_bus import EventBus
@@ -190,6 +191,13 @@ class CrawlerService:
         # 移除暂停标志：允许循环继续
         self._paused_tasks.discard(task_id)
         
+        # 检查现有线程是否存活
+        # 如果旧线程还在运行（例如正在sleep中，未及响应pause就收到了resume），
+        # 则不需要启动新线程，让旧线程继续运行即可，避免双线程竞争导致任务意外结束。
+        existing_thread = self._threads.get(task_id)
+        if existing_thread and existing_thread.is_alive():
+            return
+
         # 继续爬取：重新开启线程进入循环
         t = Thread(target=self._execute_crawl_loop, args=(task,), daemon=True)
         self._threads[task.id] = t
@@ -268,11 +276,16 @@ class CrawlerService:
             # 检查是否被暂停/停止：优先响应外部控制
             if task.id in self._stopped_tasks:
                 break
-            if task.id in self._paused_tasks:
-                break
+            
+            # 修改：暂停时不退出循环，而是休眠等待
+            # 这样可以避免线程退出后的竞态条件，确保恢复时能平滑继续
+            if task.id in self._paused_tasks or task.status == TaskStatus.PAUSED:
+                time.sleep(1)
+                continue
             
             # 检查任务状态：确保仅在 RUNNING 期间工作
             if task.status != TaskStatus.RUNNING:
+                # 如果不是 RUNNING 且不是 PAUSED (上面已处理)，那可能是 STOPPED/FAILED 等
                 break
             
             # 1. 从队列取出URL：根据策略（BFS/DFS/PRIORITY）返回下一个待爬取项
@@ -333,6 +346,15 @@ class CrawlerService:
             # task.mark_url_visited(url)
             
             # 9. 创建并追加爬取结果：供外部查询显示
+            tags = []
+            if task.config.strategy.value == "BIG_SITE_FIRST":
+                 for domain in task.config.priority_domains:
+                      if domain in url:
+                           tags.append("big_site")
+                           # 可视化反馈：控制台日志
+                           print(f"[BIG_SITE] ⭐ 正在处理优先站点: {url}")
+                           break
+
             result = CrawlResult(
                 url=url,
                 title=metadata.title,
@@ -341,6 +363,8 @@ class CrawlerService:
                 keywords=metadata.keywords,
                 publish_date=metadata.publish_date,
                 pdf_links=pdf_links,
+                tags=tags,
+                depth=depth,
                 crawled_at=datetime.now()
             )
             
@@ -356,10 +380,30 @@ class CrawlerService:
             latest_results = self.get_task_results(task.id)
             
             # 10. 将新发现的链接加入队列(深度+1)：可调整优先级策略
+            is_big_site_mode = task.config.strategy.value == "BIG_SITE_FIRST"
+            
             for link in crawlable_links:
                 if not task.is_url_visited(link):
-                    # 计算优先级(示例: PDF链接优先级更高)
-                    priority = 10 if link.endswith('.pdf') else 5
+                    # 计算优先级
+                    priority = 0
+                    
+                    # 基础优先级规则
+                    if link.lower().endswith('.pdf'):
+                        priority += 5  # 小站PDF
+                    else:
+                        priority += 1  # 普通页面
+                    
+                    # 大站优先策略
+                    if is_big_site_mode:
+                        is_priority_domain = False
+                        for domain in task.config.priority_domains:
+                            if domain in link:
+                                is_priority_domain = True
+                                break
+                        
+                        if is_priority_domain:
+                            priority += 100 # 大站 > 小站PDF(5)
+                    
                     queue.enqueue(link, depth=depth + 1, priority=priority)
             
             # 11. 请求间隔控制 (Rate Limiting)

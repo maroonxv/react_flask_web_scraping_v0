@@ -100,6 +100,7 @@ const ResultViewer = ({ taskId, results }) => {
                     <thead>
                         <tr>
                             <th>标题</th>
+                            <th>深度</th>
                             <th>作者</th>
                             <th>URL</th>
                             <th>摘要</th>
@@ -110,8 +111,12 @@ const ResultViewer = ({ taskId, results }) => {
                     </thead>
                     <tbody>
                         {results.map((res, idx) => (
-                            <tr key={idx}>
-                                <td title={res.title}>{res.title || '-'}</td>
+                            <tr key={idx} className={res.tags && res.tags.includes('big_site') ? 'highlight-row' : ''}>
+                                <td title={res.title}>
+                                    {res.tags && res.tags.includes('big_site') && <span title="大站优先" style={{marginRight: '5px'}}>⭐</span>}
+                                    {res.title || '-'}
+                                </td>
+                                <td>{res.depth}</td>
                                 <td title={res.author}>{res.author || '-'}</td>
                                 <td><a href={res.url} target="_blank" rel="noopener noreferrer" title={res.url}>{res.url}</a></td>
                                 <td title={res.abstract} className="truncate-cell">{res.abstract || '-'}</td>
@@ -146,7 +151,8 @@ const CrawlerMain = () => {
         max_depth: 3,
         max_pages: 100,
         interval: 1.0,
-        allow_domains: ''
+        allow_domains: '',
+        priority_domains: '' // Added priority_domains
     });
 
     // 暂停时的配置编辑状态
@@ -180,11 +186,13 @@ const CrawlerMain = () => {
                     const newResult = {
                         title: eventData.title,
                         url: eventData.url,
+                        depth: eventData.depth,
                         crawled_at: data.timestamp,
                         pdf_count: eventData.pdf_count,
                         author: eventData.author,
                         abstract: eventData.abstract,
-                        keywords: eventData.keywords
+                        keywords: eventData.keywords,
+                        tags: eventData.tags || [] // Added tags
                     };
                     
                     setResults(prev => {
@@ -306,7 +314,8 @@ const CrawlerMain = () => {
         try {
             const payload = {
                 ...formData,
-                allow_domains: formData.allow_domains.split(',').map(d => d.trim()).filter(d => d)
+                allow_domains: formData.allow_domains.split(',').map(d => d.trim()).filter(d => d),
+                priority_domains: formData.priority_domains.split(',').map(d => d.trim()).filter(d => d)
             };
 
             const res = await axios.post(`${API_BASE_URL}/create`, payload);
@@ -331,7 +340,8 @@ const CrawlerMain = () => {
                 max_depth: 3,
                 max_pages: 100,
                 interval: 1.0,
-                allow_domains: ''
+                allow_domains: '',
+                priority_domains: ''
             });
 
             // alert(`Task Created: ${newTaskId}`); // Removed alert for smoother UX
@@ -467,6 +477,7 @@ const CrawlerMain = () => {
                                     >
                                         <option value="BFS">BFS (广度优先)</option>
                                         <option value="DFS">DFS (深度优先)</option>
+                                        <option value="BIG_SITE_FIRST">大站优先</option>
                                     </select>
                                 </div>
                                 <div className="form-group">
@@ -478,6 +489,23 @@ const CrawlerMain = () => {
                                     />
                                 </div>
                             </div>
+
+                            {formData.strategy === 'BIG_SITE_FIRST' && (
+                                <div className="form-group full-width" style={{marginTop: '10px', marginBottom: '10px', background: 'rgba(255, 215, 0, 0.1)', padding: '10px', borderRadius: '4px', border: '1px solid rgba(255, 215, 0, 0.3)'}}>
+                                    <label style={{color: '#ffd700'}}>⭐ 大站域名设置 (逗号分隔)</label>
+                                    <input
+                                        type="text"
+                                        value={formData.priority_domains}
+                                        onChange={e => setFormData({ ...formData, priority_domains: e.target.value })}
+                                        placeholder="例如: books.toscrape.com, quotes.toscrape.com"
+                                        style={{borderColor: '#ffd700'}}
+                                    />
+                                    <small style={{color: '#ddd', marginTop: '5px', display: 'block'}}>
+                                        输入的大站域名将获得最高优先级，其下的页面会优先被爬取。
+                                    </small>
+                                </div>
+                            )}
+
                             <div className="form-row">
                                 <div className="form-group">
                                     <label>最大页数</label>
@@ -506,6 +534,7 @@ const CrawlerMain = () => {
                                     placeholder="example.com, google.com"
                                 />
                             </div>
+
                             <button type="submit" className="submit-btn">
                                 <i className="fas fa-rocket"></i> 启动爬虫
                             </button>
