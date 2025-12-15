@@ -20,6 +20,10 @@ from ..infrastructure.html_parser_impl import HtmlParserImpl  # 基础设施：B
 from ..infrastructure.robots_txt_parser_impl import RobotsTxtParserImpl  # 基础设施：robots.txt 解析与遵守
 from ..infrastructure.url_queue_impl import UrlQueueImpl  # 基础设施：URL 队列，支持 BFS/DFS/优先级
 from ..infrastructure.crawl_domain_service_impl import CrawlDomainServiceImpl  # 领域服务具体实现
+from ..infrastructure.database.sqlalchemy_crawl_dao_impl import SqlAlchemyCrawlDaoImpl # 基础设施：数据库DAO
+from ..infrastructure.database.crawl_repository_impl import CrawlRepositoryImpl # 基础设施：仓储实现
+from src.shared.db_manager import init_db # 基础设施：DB初始化
+
 from ..domain.entity.crawl_task import CrawlTask  # 领域实体：爬取任务聚合根
 from ..domain.value_objects.crawl_config import CrawlConfig  # 值对象：任务配置（策略/深度/速率等）
 from ..domain.value_objects.crawl_strategy import CrawlStrategy  # 值对象：枚举，BFS/DFS
@@ -37,14 +41,23 @@ def health():
 
 # 组合根（模块级单例）：组装所有依赖
 # 说明：简单示例使用单例以便演示；如需更灵活的生命周期与测试隔离，可在应用工厂中组装并通过依赖注入传递
+
+# 1. 初始化数据库
+init_db()
+
+# 2. 创建基础设施与服务
 _http = HttpClientImpl()
 _parser = HtmlParserImpl()
 _robots = RobotsTxtParserImpl()
-_queue = UrlQueueImpl()
 _domain_service = CrawlDomainServiceImpl(_http, _parser, _robots)
-# _service = CrawlerService(_domain_service, _http, _queue)
+
+# 3. 创建持久化层
+_dao = SqlAlchemyCrawlDaoImpl() # 使用默认 scoped_session
+_repository = CrawlRepositoryImpl(_dao)
+
+# 4. 创建应用服务
 # 重构：UrlQueue 不再单例注入，而是由 Task 内部管理
-_service = CrawlerService(_domain_service, _http)
+_service = CrawlerService(_domain_service, _http, _repository)
 
 def inject_event_bus(event_bus):
     """依赖注入：注入事件总线"""
@@ -119,6 +132,25 @@ def test_broadcast_log():
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+@bp.route("/tasks", methods=["GET"])
+def list_tasks():
+    """获取所有爬取任务（历史记录）"""
+    try:
+        tasks = _service.get_all_tasks()
+        task_list = []
+        for t in tasks:
+            task_list.append({
+                "id": t.id,
+                "name": t.name,
+                "status": t.status.value,
+                "created_at": t.created_at.isoformat() if t.created_at else None,
+                "start_url": t.config.start_url,
+                "visited_count": len(t.visited_urls)
+            })
+        return jsonify(task_list)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
 
 @bp.route("/create", methods=["POST"])
 def create():

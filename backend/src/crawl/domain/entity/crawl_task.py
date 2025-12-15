@@ -201,7 +201,8 @@ class CrawlTask:
             author=result.author,
             abstract=result.abstract,
             keywords=result.keywords,
-            publish_date=result.publish_date
+            publish_date=result.publish_date,
+            tags=result.tags
         ))
 
     def record_crawl_error(self, url: str, error_message: str, error_type: str = "GeneralError"):

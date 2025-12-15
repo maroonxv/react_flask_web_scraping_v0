@@ -166,6 +166,22 @@ const CrawlerMain = () => {
 
     // 初始化 WebSocket（只在组件挂载时执行一次）
     useEffect(() => {
+        // Load existing tasks
+        const loadTasks = async () => {
+            try {
+                const res = await axios.get(`${API_BASE_URL}/tasks`);
+                // Normalize dates
+                const loadedTasks = res.data.map(t => ({
+                    ...t,
+                    createdAt: t.created_at ? new Date(t.created_at) : new Date()
+                }));
+                setTasks(loadedTasks);
+            } catch (err) {
+                console.error("Failed to load tasks", err);
+            }
+        };
+        loadTasks();
+
         socketRef.current = io(SOCKET_URL);
 
         socketRef.current.on('connect', () => {
@@ -418,7 +434,7 @@ const CrawlerMain = () => {
 
     return (
         <div className="crawler-app">
-            <div className="sidebar glass-panel">
+            <div className="sidebar">
                 <div className="sidebar-header">
                     <h2><i className="fas fa-spider"></i> 爬虫控制台</h2>
                     <button className="new-task-btn" onClick={() => setSelectedTaskId(null)}>
@@ -491,16 +507,15 @@ const CrawlerMain = () => {
                             </div>
 
                             {formData.strategy === 'BIG_SITE_FIRST' && (
-                                <div className="form-group full-width" style={{marginTop: '10px', marginBottom: '10px', background: 'rgba(255, 215, 0, 0.1)', padding: '10px', borderRadius: '4px', border: '1px solid rgba(255, 215, 0, 0.3)'}}>
-                                    <label style={{color: '#ffd700'}}>⭐ 大站域名设置 (逗号分隔)</label>
+                                <div className="form-group full-width priority-domains-alert">
+                                    <label>⭐ 大站域名设置 (逗号分隔)</label>
                                     <input
                                         type="text"
                                         value={formData.priority_domains}
                                         onChange={e => setFormData({ ...formData, priority_domains: e.target.value })}
                                         placeholder="例如: books.toscrape.com, quotes.toscrape.com"
-                                        style={{borderColor: '#ffd700'}}
                                     />
-                                    <small style={{color: '#ddd', marginTop: '5px', display: 'block'}}>
+                                    <small>
                                         输入的大站域名将获得最高优先级，其下的页面会优先被爬取。
                                     </small>
                                 </div>
@@ -545,7 +560,6 @@ const CrawlerMain = () => {
                         <div className="dashboard-header glass-panel">
                             <div className="header-left">
                                 <h2>{currentTaskName}</h2>
-                                <span className="task-id-badge">{selectedTaskId}</span>
                             </div>
                             <div className="header-right">
                                 <div className="status-indicator">
@@ -567,7 +581,7 @@ const CrawlerMain = () => {
                         </div>
 
                         <div className="controls-bar glass-panel">
-                            <button className="control-btn start" onClick={() => handleStart(selectedTaskId)} disabled={currentStatus?.status === TASK_STATUS.RUNNING || currentStatus?.status === TASK_STATUS.COMPLETED}>
+                            <button className="control-btn start" onClick={() => handleStart(selectedTaskId)} disabled={currentStatus?.status === TASK_STATUS.RUNNING || currentStatus?.status === TASK_STATUS.COMPLETED || currentStatus?.status === TASK_STATUS.PAUSED}>
                                 <i className="fas fa-play"></i> 开始
                             </button>
                             <button className="control-btn pause" onClick={() => handlePause(selectedTaskId)} disabled={currentStatus?.status !== TASK_STATUS.RUNNING}>

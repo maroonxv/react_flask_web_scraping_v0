@@ -15,6 +15,7 @@ class PageCrawledEvent(DomainEvent):
     abstract: str = None
     keywords: List[str] = field(default_factory=list)
     publish_date: str = None
+    tags: List[str] = field(default_factory=list)
 
 @dataclass
 class PdfFoundEvent(DomainEvent):

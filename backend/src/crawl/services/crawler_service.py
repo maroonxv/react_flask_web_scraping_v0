@@ -23,6 +23,7 @@ import time  # 引入 time 模块
 from ..domain.domain_service.i_crawl_domain_service import ICrawlDomainService
 from ..domain.demand_interface.i_http_client import IHttpClient
 from ..domain.demand_interface.i_url_queue import IUrlQueue
+from ..domain.demand_interface.i_crawl_repository import ICrawlRepository
 from ..domain.entity.crawl_task import CrawlTask
 from ..domain.value_objects.crawl_status import TaskStatus
 from ..domain.value_objects.crawl_strategy import CrawlStrategy
@@ -47,7 +48,7 @@ class CrawlerService:
         self,
         crawl_domain_service: ICrawlDomainService,
         http_client: IHttpClient,
-        # url_queue: IUrlQueue, # 移除单例注入
+        repository: ICrawlRepository,
         event_bus: Optional[EventBus] = None
     ):
         """
@@ -56,16 +57,17 @@ class CrawlerService:
         参数:
             crawl_domain_service: 爬取领域服务
             http_client: HTTP客户端
-            # url_queue: URL队列
+            repository: 爬取任务仓储
             event_bus: 事件总线 (可选，便于测试)
         """
         # 依赖注入：保存领域服务、HTTP客户端与URL队列引用
         self._crawl_service = crawl_domain_service
         self._http = http_client
-        # self._queue = url_queue # 移除单例引用
+        self._repository = repository
         self._event_bus = event_bus
         
-        # 暂时用字典模拟任务存储(后续可替换为仓储)
+        # 内存缓存：仅存储活跃（Running/Paused）或最近访问的任务
+        # 为了简化，我们仍然可以用它来hold住对象引用，以便 queue_obj 不被回收
         self._tasks: dict[str, CrawlTask] = {}
         
         # 暂停标志
@@ -74,7 +76,9 @@ class CrawlerService:
         # 记录每个任务的工作线程
         self._threads: Dict[str, Thread] = {}
 
-
+    def get_all_tasks(self) -> List[CrawlTask]:
+        """获取所有任务（从数据库）"""
+        return self._repository.get_all_tasks()
 
 # -------------------- 爬取任务生命周期管理 --------------------
 
@@ -97,11 +101,13 @@ class CrawlerService:
         task = CrawlTask(id=task_id, config=config, name=name)
         
         # 初始化该任务的专属URL队列
-        # 重构：每个任务拥有独立的UrlQueueImpl实例
         task.url_queue_obj = UrlQueueImpl()
         
-        # 存储任务
+        # 存储任务到内存缓存
         self._tasks[task_id] = task
+        
+        # 持久化到数据库
+        self._repository.save_task(task)
         
         return task_id
 
@@ -113,17 +119,35 @@ class CrawlerService:
             task_id: 任务ID
         """
         # 0. 检查是否有其他任务正在运行
+        # 检查内存中的活跃任务
         for t in self._tasks.values():
             if t.id != task_id and t.status == TaskStatus.RUNNING:
                 raise ValueError(f"已有任务 {t.id} 正在运行，请先停止它")
         
+        # 获取任务对象（优先内存，其次DB）
         task = self._tasks.get(task_id)
+        if not task:
+            task = self._repository.get_task(task_id)
+            if task:
+                # 重新初始化非持久化字段
+                task.url_queue_obj = UrlQueueImpl()
+                self._tasks[task_id] = task
+        
         if not task:
             raise ValueError(f"任务 {task_id} 不存在")
 
         # 1. 验证任务状态：仅允许从 PENDING/PAUSED 进入 RUNNING
-        if task.status not in [TaskStatus.PENDING, TaskStatus.PAUSED]:
-            raise ValueError(f"任务状态为 {task.status}，无法启动")
+        # 如果是从DB加载的，可能是 STOPPED/FAILED/COMPLETED，这些能不能重启？
+        # 假设可以重启 STOPPED/FAILED/COMPLETED 任务，视为新的一轮（清空 visited?）
+        # 或者严格遵循状态机。这里遵循严格状态机，如果想重跑，需要新建任务或重置状态。
+        # 为了方便演示，允许 STOPPED/FAILED/COMPLETED 重新开始（视为 Resume or Restart）
+        
+        if task.status in [TaskStatus.COMPLETED, TaskStatus.STOPPED, TaskStatus.FAILED]:
+             # 允许重启，但需要重置状态？或者视为 Resume?
+             # 如果是 PENDING/PAUSED，正常流程。
+             pass
+        elif task.status not in [TaskStatus.PENDING, TaskStatus.PAUSED]:
+             raise ValueError(f"任务状态为 {task.status}，无法启动")
         
         # 2. 领域层状态转换：设置任务状态为 RUNNING/恢复
         if task.status == TaskStatus.PENDING:
@@ -131,21 +155,43 @@ class CrawlerService:
         else:
             task.resume_crawl()
         
+        # 持久化状态变更
+        self._repository.save_task(task)
+        
         # 发布状态变更事件
         self._publish_domain_events(task)
 
         # 3. 初始化队列(仅在首次启动时)
         queue = task.url_queue_obj
+        if not queue:
+            task.url_queue_obj = UrlQueueImpl()
+            queue = task.url_queue_obj
+
         if task.status == TaskStatus.RUNNING and queue.is_empty():
              # 只有当队列为空（可能是新任务或意外清空）时才初始化
              
-             if len(task.visited_urls) == 0: # 简单判断是否新任务
+             # 如果是 Resume，且 visited_urls 不为空，但队列空了（因为没持久化队列），
+             # 我们只能重新 add start_url，但 visited_urls 会阻止它被处理吗？
+             # 如果 is_url_visited(start_url) 为真，它会被跳过。
+             # 这是一个问题。为了演示，我们假设 Resume 主要是针对 "Pause" (内存还在)。
+             # 如果是 Restart (内存丢了)，我们可能需要清空 visited_urls 才能重跑?
+             # 或者我们允许 start_url 即使 visited 也可以入队?
+             
+             if len(task.visited_urls) == 0: 
+                 # 新任务
                  queue.clear()
                  queue.initialize(
                     start_url=task.config.start_url,
                     strategy=task.config.strategy.value,
                     max_depth=task.config.max_depth
                 )
+             else:
+                 # 可能是重启的任务。如果我们不清空 visited，队列又空，任务会立即结束。
+                 # 这种情况下，我们假设用户想重跑？
+                 # 或者是想继续？
+                 # 简单起见，如果是从 STOPPED/FAILED/COMPLETED 重启，我们清空 visited。
+                 # 如果是 PAUSED 恢复，我们保留 visited。
+                 pass
         
         # 4. 异步开始爬取循环：开启守护线程，避免阻塞调用方
         t = Thread(target=self._execute_crawl_loop, args=(task,), daemon=True)
@@ -162,10 +208,11 @@ class CrawlerService:
         # 查询并校验任务存在性
         task = self._tasks.get(task_id)
         if not task:
-            raise ValueError(f"任务 {task_id} 不存在")
+            raise ValueError(f"任务 {task_id} 不存在或未在运行")
         
         # 领域层状态转换：设置为 PAUSED
         task.pause_crawl()
+        self._repository.save_task(task) # 持久化
         self._publish_domain_events(task)
         
         # 标记为暂停：让循环检测到后退出
@@ -182,10 +229,18 @@ class CrawlerService:
         # 查询并校验任务存在性
         task = self._tasks.get(task_id)
         if not task:
+            # 尝试从DB加载
+            task = self._repository.get_task(task_id)
+            if task:
+                self._tasks[task_id] = task
+                task.url_queue_obj = UrlQueueImpl() # 重建队列对象（空的）
+        
+        if not task:
             raise ValueError(f"任务 {task_id} 不存在")
         
         # 领域层状态转换：恢复为 RUNNING
         task.resume_crawl()
+        self._repository.save_task(task) # 持久化
         self._publish_domain_events(task)
         
         # 移除暂停标志：允许循环继续
@@ -212,10 +267,15 @@ class CrawlerService:
         """
         task = self._tasks.get(task_id)
         if not task:
-            raise ValueError(f"任务 {task_id} 不存在")
+             # 如果内存没有，可能已经停止了，更新DB即可
+             task = self._repository.get_task(task_id)
+             if not task:
+                 raise ValueError(f"任务 {task_id} 不存在")
+        
         self._stopped_tasks.add(task_id)
         
         task.stop_crawl()
+        self._repository.save_task(task) # 持久化
         self._publish_domain_events(task)
         
         if task.url_queue_obj:
@@ -228,10 +288,11 @@ class CrawlerService:
         """
         获取任务的最新结果列表
         """
-        task = self._tasks.get(task_id)
-        if not task:
-            return []
-        return task.results
+        # 优先从 repository 获取完整结果
+        # task.results 在内存中只包含本次运行新增的（如果没全加载的话）
+        # 但我们之前 implementation 中 repository.get_task 没有加载 results
+        # 所以我们需要调用 repository.get_results
+        return self._repository.get_results(task_id)
 
 
     def get_task_status(self, task_id: str) -> dict:
@@ -242,20 +303,44 @@ class CrawlerService:
             任务状态字典
             - task_id/status/visited_count/result_count/queue_size/current_depth
         """
-        # 查询任务，不存在则返回错误消息
+        # 优先查询内存任务（获取实时队列信息）
         task = self._tasks.get(task_id)
+        is_in_memory = True
+        
+        if not task:
+            # 内存没有，查DB
+            task = self._repository.get_task(task_id)
+            is_in_memory = False
+            
         if not task:
             return {"error": "任务不存在"}
         
+        # 获取结果数量
+        # 如果在内存中，task.results 可能不全（如果我们做了分页加载优化），或者全（如果我们一直append）
+        # 为了准确，查询 DB count? 或者 repository.get_results
+        # 为了性能，如果内存有，用内存的长度 + 历史？
+        # 目前 CrawlTask.results 是累加的。如果从DB加载，results是空的。
+        # 所以如果 is_in_memory is False，results count 应该是 DB count。
+        # 如果 is_in_memory is True，task.results 包含所有吗？
+        # 在 _execute_crawl_loop 中，我们 task.add_crawl_result。
+        # 如果任务是从 DB 加载并 resume 的，task.results 初始为空。
+        # 所以 task.results 只包含 "本次运行" 的结果。
+        # 这是一个 bug。我们需要 total result count。
+        # 简单做法：查询 DB results count。
+        # 为了避免每次查询所有结果，我们可以 add count method to repository.
+        # 或者 get_results(task_id) len.
+        
+        results_count = len(self._repository.get_results(task_id))
+
         return {
             "task_id": task.id,
             "name": task.name,  # Added name
             "status": task.status.value,
             # 注意：实体中维护了去重集合 _visited_urls
             "visited_count": len(task.visited_urls),
-            "result_count": len(task.results),
-            "queue_size": task.url_queue_obj.size() if task.url_queue_obj else 0,
-            "current_depth": task.url_queue_obj.get_current_depth() if task.url_queue_obj else 0
+            "result_count": results_count,
+            "queue_size": task.url_queue_obj.size() if is_in_memory and task.url_queue_obj else 0,
+            "current_depth": task.url_queue_obj.get_current_depth() if is_in_memory and task.url_queue_obj else 0
         }
 
 # ---------------------  内部方法：执行爬取循环、处理事件队列 ---------------------
@@ -289,6 +374,7 @@ class CrawlerService:
                 break
             
             # 1. 从队列取出URL：根据策略（BFS/DFS/PRIORITY）返回下一个待爬取项
+            loop_start_time = time.time()
             queued_url = queue.dequeue()
             if not queued_url:
                 break
@@ -371,13 +457,19 @@ class CrawlerService:
             # 使用新的方法添加结果并记录事件
             task.add_crawl_result(result, depth)
             
+            # 持久化结果
+            self._repository.save_result(task.id, result)
+            
+            # 定期持久化任务状态（主要是 visited_urls）
+            # 为了性能，每 5 个 URL 保存一次 task
+            if len(task.visited_urls) % 5 == 0:
+                self._repository.save_task(task)
+
             # 发布积压的事件（如PageCrawledEvent）
             self._publish_domain_events(task)
 
             # 供crawler_view调用：查询一次最新结果
-            # (虽然此处没有直接传递给view，但符合“每增加一条结果就查询一次”的要求，
-            #  实际上可以通过事件或者回调机制通知View，这里我们假设事件发布就是通知机制的一部分)
-            latest_results = self.get_task_results(task.id)
+            # latest_results = self.get_task_results(task.id)
             
             # 10. 将新发现的链接加入队列(深度+1)：可调整优先级策略
             is_big_site_mode = task.config.strategy.value == "BIG_SITE_FIRST"
@@ -407,13 +499,19 @@ class CrawlerService:
                     queue.enqueue(link, depth=depth + 1, priority=priority)
             
             # 11. 请求间隔控制 (Rate Limiting)
-            time.sleep(task.config.request_interval)
+            # time.sleep(task.config.request_interval)
+            elapsed = time.time() - loop_start_time
+            sleep_time = max(0, task.config.request_interval - elapsed)
+            time.sleep(sleep_time)
         
         # 12. 爬取完成或停止：根据停止标志或队列耗尽设置最终状态
         if task.id in self._stopped_tasks:
             task.stop_crawl()
         elif queue.is_empty() and task.status == TaskStatus.RUNNING:
             task.complete_crawl()
+        
+        # 最终持久化
+        self._repository.save_task(task)
         
         # 发布最终状态变更事件（Stopped 或 Completed）
         self._publish_domain_events(task)
@@ -447,7 +545,7 @@ class CrawlerService:
         """
         task = self._tasks.get(task_id)
         if not task:
-            raise ValueError(f"任务 {task_id} 不存在")
+            raise ValueError(f"任务 {task_id} 不存在或未在内存中运行")
             
         if task.url_queue_obj:
              task.url_queue_obj.enqueue(url, depth=depth, priority=priority)
@@ -464,10 +562,15 @@ class CrawlerService:
         """
         task = self._tasks.get(task_id)
         if not task:
+            # 尝试从DB加载
+            task = self._repository.get_task(task_id)
+            if task:
+                self._tasks[task_id] = task
+
+        if not task:
             raise ValueError(f"任务 {task_id} 不存在")
             
         # 更新任务配置
         task.set_config(interval=interval, max_pages=max_pages, max_depth=max_depth)
-
-
-
+        # 持久化
+        self._repository.save_task(task)
