@@ -17,7 +17,14 @@ if not DATABASE_URL:
 
 # Create engine
 # pool_recycle to prevent MySQL connection timeout
-engine = create_engine(DATABASE_URL, pool_recycle=3600, pool_pre_ping=True)
+# Increased pool_size and max_overflow to handle concurrent requests and websocket connections
+engine = create_engine(
+    DATABASE_URL, 
+    pool_recycle=3600, 
+    pool_pre_ping=True,
+    pool_size=20,
+    max_overflow=20
+)
 
 # Create session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

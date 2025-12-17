@@ -163,6 +163,7 @@ const CrawlerMain = () => {
     });
 
     const socketRef = useRef(null);
+    const mainContentRef = useRef(null);
 
     // 初始化 WebSocket（只在组件挂载时执行一次）
     useEffect(() => {
@@ -244,11 +245,15 @@ const CrawlerMain = () => {
         };
     }, []);
 
-    // 监听选中任务变化，自动加入房间
+    // 监听选中任务变化，自动加入房间，并重置滚动条
     useEffect(() => {
         if (selectedTaskId && socketRef.current) {
             console.log(`Joining room: ${selectedTaskId}`);
             socketRef.current.emit('join', { room: selectedTaskId });
+        }
+        // Reset scroll position when switching tasks
+        if (mainContentRef.current) {
+            mainContentRef.current.scrollTop = 0;
         }
     }, [selectedTaskId]);
 
@@ -436,7 +441,7 @@ const CrawlerMain = () => {
         <div className="crawler-app">
             <div className="sidebar">
                 <div className="sidebar-header">
-                    <h2><i className="fas fa-spider"></i> 爬虫控制台</h2>
+                    <h2><i className="fas fa-spider"></i> CrawlFlow</h2>
                     <button className="new-task-btn" onClick={() => setSelectedTaskId(null)}>
                         <i className="fas fa-plus"></i> 新建任务
                     </button>
@@ -459,8 +464,7 @@ const CrawlerMain = () => {
                     ))}
                 </ul>
             </div>
-
-            <div className="main-content">
+            <div className="main-content" ref={mainContentRef}>
                 {!selectedTaskId ? (
                     <div className="create-task-container glass-panel">
                         <h2>创建新任务</h2>
