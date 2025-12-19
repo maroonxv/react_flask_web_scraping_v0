@@ -28,6 +28,8 @@ from src.shared.event_bus import EventBus
 from src.crawl.domain.value_objects.crawl_strategy import CrawlStrategy
 from src.crawl.domain.value_objects.crawl_status import TaskStatus
 import time
+from src.crawl.domain.demand_interface.i_crawl_repository import ICrawlRepository
+from src.crawl.domain.value_objects.crawl_result import CrawlResult
 
 # ============================================================================
 # Fixtures
@@ -261,6 +263,29 @@ class TestCrawlerServiceRealIntegration:
     @pytest.fixture
     def real_crawler_service(self):
         """组装真实的 CrawlerService"""
+        class InMemoryCrawlRepository(ICrawlRepository):
+            def __init__(self):
+                self._tasks = {}
+                self._results = {}
+
+            def save_task(self, task):
+                self._tasks[task.id] = task
+
+            def get_task(self, task_id: str):
+                return self._tasks.get(task_id)
+
+            def get_all_tasks(self):
+                return list(self._tasks.values())
+
+            def save_result(self, task_id: str, result: CrawlResult) -> None:
+                self._results.setdefault(task_id, []).append(result)
+
+            def get_results(self, task_id: str):
+                return list(self._results.get(task_id, []))
+
+            def delete_results(self, task_id: str) -> None:
+                self._results[task_id] = []
+
         http_client = HttpClientImpl(timeout=10, max_retries=2)
         html_parser = HtmlParserImpl()
         # 使用 Mock 的 RobotsParser 以避免 urllib 阻塞和不必要的网络限制
@@ -275,10 +300,12 @@ class TestCrawlerServiceRealIntegration:
             robots_parser=robots_parser
         )
         event_bus = EventBus()
+        repository = InMemoryCrawlRepository()
         
         service = CrawlerService(
             crawl_domain_service=domain_service,
             http_client=http_client,
+            repository=repository,
             event_bus=event_bus
         )
         

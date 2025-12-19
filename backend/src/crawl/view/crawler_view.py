@@ -284,16 +284,16 @@ def export_results(task_id):
     data = []
     for res in results:
         data.append({
-            "Title": res.title,
+            "标题": res.title,
             "URL": res.url,
-            "Depth": res.depth,
-            "Author": res.author,
-            "Abstract": res.abstract,
-            "Keywords": ", ".join(res.keywords) if res.keywords else "",
-            "Publish Date": res.publish_date,
-            "PDF Count": len(res.pdf_links) if res.pdf_links else 0,
-            "PDF Links": ", ".join(res.pdf_links) if res.pdf_links else "",
-            "Crawled At": res.crawled_at
+            "深度": res.depth,
+            "作者": res.author,
+            "摘要": res.abstract,
+            "关键词": ", ".join(res.keywords) if res.keywords else "",
+            "发布时间": res.publish_date,
+            "PDF数量": len(res.pdf_links) if res.pdf_links else 0,
+            "PDF链接": ", ".join(res.pdf_links) if res.pdf_links else "",
+            "爬取时间": res.crawled_at.isoformat() if res.crawled_at else None
         })
     
     df = pd.DataFrame(data)
@@ -301,7 +301,7 @@ def export_results(task_id):
     output = BytesIO()
     # Use xlsxwriter engine for better compatibility, or default openpyxl
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df.to_excel(writer, index=False, sheet_name='Results')
+        df.to_excel(writer, index=False, sheet_name='结果')
     
     output.seek(0)
     

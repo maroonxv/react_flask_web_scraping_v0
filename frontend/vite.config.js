@@ -5,6 +5,9 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 5173,
+    fs: {
+      allow: [".."],
+    },
     proxy: {
       "/api": {
         target: "http://localhost:5000",
@@ -15,6 +18,6 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     globals: true,
-    include: ["../test/integration/**/*.test.{js,jsx,ts,tsx}"],
+    include: ["test/integration/**/*.test.{js,jsx,ts,tsx}"],
   },
 });

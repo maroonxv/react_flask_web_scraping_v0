@@ -1,58 +1,123 @@
-本项目采用前后端分离架构
-前端使用React.js，后端使用Flask
+# CrawlFlow - 智能网络爬虫系统
 
-这是一个 网络爬虫项目，用于从指定的URL中提取数据。
-
-1、实现基于请求队列的广度优先爬取策略/深度优先爬取策略/大战优先爬取策略(至少一种以上),实现Robots协议解析与遵守,实现URL去重PDF链接。
-2、提取关键信息如标题、作者、摘要、关键词、发表时间、URL链接等保存。
-3、实现爬取速率控制(请求间隔),能够监控爬取状态和记录爬取日志,有一定的设计异常处理机制(网络异常、解析失败等)。
-4、界面友好,能够控制爬取开始和结束,显示爬取状态、爬取结果等信息。
-
-采取领域驱动开发的原则进行项目设计和开发。
-后端使用Flask框架,实现RESTful API,与前端进行交互。
-暂时只实现了crawl一个app，负责爬取功能的实现。
-
-crawl的源码按照领域驱动开发的原则进行组织
-- domain：领域层，负责定义领域实体、值对象、领域事件、领域服务与需求方接口
-- services：应用层，负责协调领域层的组件
-- infrastructure：基础设施层，负责调用外部系统的提供方接口，实现领域层定义的需求方接口以及领域服务
-
-- views：视图层，负责处理HTTP请求和响应，与前端进行交互，相当于前后端的适配器
-
-前端使用React.js,实现用户界面的展示和交互。
+[![React](https://img.shields.io/badge/Frontend-React-61DAFB?logo=react)](https://reactjs.org/)
+[![Flask](https://img.shields.io/badge/Backend-Flask-000000?logo=flask)](https://flask.palletsprojects.com/)
 
 
 
-后端的测试已经写得比较完善了，有单元测试和集成测试。
-单元测试包括对于 infrastructure 层的 http_client_impl.py、html_parser_impl.py、robots_txt_parser_impl.py、url_queue_impl.py的测试
-集成测试包括
+---
 
+## 📖 项目简介
 
-### 推荐方案：ToScrape 沙盒（最佳效果）
-这个网站有两个清晰的子站（书店和名言），非常适合模拟“从入口发现多个站点，并优先爬取其中一个”的场景。
+CrawlFlow 爬虫平台支持多种遍历策略（BFS/DFS/大站优先），内置 Robots 协议解析、智能去重和 PDF 识别功能，并通过 WebSocket 实现毫秒级的日志与状态同步。
 
-- 入口 URL : http://toscrape.com
-- 子站 A : books.toscrape.com
-- 子站 B : quotes.toscrape.com
-测试配置建议：
+### ✨ 核心特性
 
-1. 起始 URL : http://toscrape.com
-2. 允许的域名 : toscrape.com, books.toscrape.com, quotes.toscrape.com
-3. 大站优先域名 : books.toscrape.com （您可以填这个，验证是否书店的页面会被优先抓取并打上 ⭐）
-### 备选方案 1：Crawler Test
-这是您默认配置中的网站，它包含各种链接测试。
+- **多策略调度引擎**：支持广度优先 (BFS)、深度优先 (DFS) 及创新的 **大站优先 (Big Site First)** 调度算法。
+- **实时可视化监控**：基于 WebSocket 的实时日志流和任务状态仪表盘，让爬虫运行过程透明可见。
+- **智能化解析**：自动提取标题、作者、摘要、关键词及 PDF 文档链接，支持 Robots.txt 协议合规性检查。
+- **高鲁棒性设计**：内置网络异常重试、解析容错机制和速率限制，适应不稳定的网络环境。
+- **现代化 UI/UX**：采用 Midnight Ocean 暗色系玻璃拟态设计，提供极佳的交互体验。
 
-- 入口 URL : https://crawler-test.com/
-- 测试方法 : 这个网站有很多子页面。您可以随便挑一个二级路径作为“大站”来测试正则匹配（虽然它是单域名，但在我们的逻辑里，通常是匹配域名后缀。如果我们的逻辑严格匹配域名，这个可能不太好测“跨站”优先级，除非它有外链）。
-  - 注：由于我们的逻辑是匹配 priority_domains （域名），对于单域名的网站，大站策略可能无法区分同域名下的不同路径。因此强烈建议使用上面的 ToScrape 方案。
-### 备选方案 2：Scrape This Site
-另一个流行的练习场。
+---
 
-- 入口 URL : https://www.scrapethissite.com/
-- 特点 : 包含“Sandbox”和“Lessons”等不同板块。
-### 总结
-为了最直观地看到**⭐图标 和 优先调度**的效果，请使用 ToScrape 组合：
+## 🏗️ 系统架构
 
-- Start URL : http://toscrape.com
-- Allow Domains : toscrape.com, books.toscrape.com, quotes.toscrape.com
-- Priority Domains : books.toscrape.com
+本项目严格遵循 **领域驱动设计 (DDD)** 原则，后端代码组织清晰，高内聚低耦合。
+
+### 后端架构 (Python Flask)
+
+| 层级 | 职责描述 | 包含组件 |
+| :--- | :--- | :--- |
+| **Interfaces (Views)** | 适配层，处理 HTTP/WebSocket 请求 | `views/crawler_view.py` |
+| **Application (Services)** | 应用服务层，编排业务流程 | `services/crawler_service.py` |
+| **Domain** | 核心业务逻辑，纯净的业务规则 | `entity`, `value_objects`, `domain_event`, `domain_service` |
+| **Infrastructure** | 基础设施层，技术实现细节 | `http_client`, `html_parser`, `database_repository` |
+
+### 前端架构 (React.js + Vite)
+
+采用组件化开发，通过 `Socket.io` 与后端保持实时双向通信，状态管理清晰，界面响应迅速。
+
+---
+
+## 🧪 测试方案与用例
+
+为了验证系统的各项能力，我们设计了以下五组标准测试用例，覆盖了从基础功能到高级策略的全方位测试。您可以直接在“创建新任务”界面使用这些配置。
+
+### 1. 电商全量扫描 (BFS 基准测试)
+**测试目的**：测试爬虫在标准电商网站上的广度优先遍历能力，确保能逐层获取商品列表。
+- **任务名称**：`Books_BFS_Test`
+- **起始 URL**：`http://books.toscrape.com/`
+- **允许的域名**：`books.toscrape.com`
+- **策略**：`BFS` (广度优先)
+- **最大深度**：3
+- **最大页数**：50
+
+### 2. 话题深度挖掘 (DFS 深度测试)
+**测试目的**：测试深度优先策略，模拟顺着某个标签或分类一路向下挖掘数据的场景。
+- **任务名称**：`Quotes_DFS_Deep`
+- **起始 URL**：`http://quotes.toscrape.com/`
+- **允许的域名**：`quotes.toscrape.com`
+- **策略**：`DFS` (深度优先)
+- **最大深度**：5
+- **最大页数**：50
+
+### 3. 多站点优先级调度 (大站优先策略 - 核心功能)
+**测试目的**：验证在多域名混合环境下，爬虫是否能严格遵守“大站优先”规则，无视链接发现顺序，优先处理指定域名的队列。
+- **任务名称**：`Priority_Quotes_First`
+- **起始 URL**：`http://toscrape.com/`
+- **允许的域名**：`toscrape.com, books.toscrape.com, quotes.toscrape.com`
+- **策略**：`BIG_SITE_FIRST` (大站优先)
+- **大站域名设置**：`quotes.toscrape.com`
+- **预期效果**：尽管入口页同时存在书籍和名言的链接，爬虫应优先抓取 `quotes` 相关的页面（在结果列表中标有 ⭐），处理完或暂无 `quotes` 链接后才会去处理 `books`。
+
+### 4. 真实环境模拟 (复杂 DOM 解析)
+**测试目的**：测试对包含图片、分页和较复杂 DOM 结构的真实 WordPress 站点的解析能力。
+- **任务名称**：`Pokemon_Shop_Real`
+- **起始 URL**：`https://scrapeme.live/shop/`
+- **允许的域名**：`scrapeme.live`
+- **策略**：`BFS`
+- **最大深度**：3
+- **最大页数**：30
+
+### 5. 爬虫陷阱与鲁棒性测试
+**测试目的**：验证系统的错误处理、超时机制和死链处理能力。
+- **任务名称**：`Crawler_Torture_Test`
+- **起始 URL**：`https://crawler-test.com/`
+- **允许的域名**：`crawler-test.com`
+- **策略**：`DFS`
+- **最大深度**：2 (该站点陷阱多，建议浅尝辄止)
+- **最大页数**：20
+
+---
+
+## 🛠️ 快速开始
+
+### 后端启动
+```bash
+cd backend
+# 激活虚拟环境 (可选)
+source .venv/bin/activate  # Linux/Mac
+.venv\Scripts\activate     # Windows
+# 运行服务
+python run.py
+```
+
+### 前端启动
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+访问 `http://localhost:5173` 即可开始使用。
+
+---
+
+## 📊 测试覆盖
+后端拥有完善的单元测试和集成测试体系，覆盖核心组件：
+- **Infrastructure 层测试**：覆盖 HTTP 客户端、HTML 解析器、Robots 协议解析器及 URL 队列管理。
+- **集成测试**：模拟真实爬取流程，验证各个组件协同工作的正确性。
+
+---
+

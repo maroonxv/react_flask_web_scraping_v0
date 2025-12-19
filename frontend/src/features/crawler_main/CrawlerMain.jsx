@@ -19,11 +19,23 @@ const TASK_STATUS = {
 
 // 组件：日志查看器
 const LogViewer = ({ taskId, logs }) => {
+    const logContainerRef = useRef(null);
     const logEndRef = useRef(null);
+    const [isPinnedToBottom, setIsPinnedToBottom] = useState(false);
+
+    const updatePinnedState = () => {
+        const el = logContainerRef.current;
+        if (!el) return;
+        const distanceToBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+        setIsPinnedToBottom(distanceToBottom <= 40);
+    };
 
     useEffect(() => {
-        logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }, [logs]);
+        if (!isPinnedToBottom) return;
+        const el = logContainerRef.current;
+        if (!el) return;
+        el.scrollTop = el.scrollHeight;
+    }, [logs, isPinnedToBottom]);
 
     return (
         <div className="log-viewer glass-panel">
@@ -31,7 +43,11 @@ const LogViewer = ({ taskId, logs }) => {
                 <h3><i className="fas fa-terminal"></i> 实时日志</h3>
                 <span className="log-count">{logs.length} 条</span>
             </div>
-            <div className="log-content custom-scrollbar">
+            <div
+                className="log-content custom-scrollbar"
+                ref={logContainerRef}
+                onScroll={updatePinnedState}
+            >
                 {logs.length === 0 ? <p className="no-data">等待日志...</p> : logs.map((log, index) => (
                     <div key={index} className={`log-entry ${log.level?.toLowerCase()} ${log.category}`}>
                         <span className="log-time">{log.timestamp}</span>
@@ -51,11 +67,23 @@ const LogViewer = ({ taskId, logs }) => {
 
 // 组件：结果查看器
 const ResultViewer = ({ taskId, results }) => {
+    const tableContainerRef = useRef(null);
     const resultEndRef = useRef(null);
+    const [isPinnedToBottom, setIsPinnedToBottom] = useState(false);
+
+    const updatePinnedState = () => {
+        const el = tableContainerRef.current;
+        if (!el) return;
+        const distanceToBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+        setIsPinnedToBottom(distanceToBottom <= 40);
+    };
 
     useEffect(() => {
-        resultEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }, [results]);
+        if (!isPinnedToBottom) return;
+        const el = tableContainerRef.current;
+        if (!el) return;
+        el.scrollTop = el.scrollHeight;
+    }, [results, isPinnedToBottom]);
 
     const handleExport = async () => {
         if (!taskId) return;
@@ -95,7 +123,11 @@ const ResultViewer = ({ taskId, results }) => {
                     <i className="fas fa-download"></i> 导出
                 </button>
             </div>
-            <div className="table-container custom-scrollbar">
+            <div
+                className="table-container custom-scrollbar"
+                ref={tableContainerRef}
+                onScroll={updatePinnedState}
+            >
                 <table>
                     <thead>
                         <tr>
@@ -133,6 +165,24 @@ const ResultViewer = ({ taskId, results }) => {
     );
 };
 
+const formatTaskDisplayName = (taskName, taskId) => {
+    const name = (taskName || '').trim();
+    if (!name) return taskId || '';
+    if (taskId && name === taskId) return taskId;
+
+    if (taskId && name.includes(taskId)) {
+        const cleaned = name.replaceAll(taskId, '').trim();
+        return cleaned || taskId;
+    }
+
+    const uuidMatch = name.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+    if (!uuidMatch) return name;
+
+    const prefix = name.slice(0, uuidMatch.index).trim();
+    if (prefix) return prefix;
+    return name;
+};
+
 const CrawlerMain = () => {
     // 状态管理
     const [tasks, setTasks] = useState([]);
@@ -149,8 +199,8 @@ const CrawlerMain = () => {
         start_url: 'https://crawler-test.com/',
         strategy: 'BFS',
         max_depth: 3,
-        max_pages: 100,
-        interval: 1.0,
+        max_pages: 5,
+        interval: 0.2,
         allow_domains: '',
         priority_domains: '' // Added priority_domains
     });
@@ -359,8 +409,8 @@ const CrawlerMain = () => {
                 start_url: 'https://crawler-test.com/',
                 strategy: 'BFS',
                 max_depth: 3,
-                max_pages: 100,
-                interval: 1.0,
+                max_pages: 5,
+                interval: 0.2,
                 allow_domains: '',
                 priority_domains: ''
             });
@@ -435,7 +485,10 @@ const CrawlerMain = () => {
     // 渲染
     const currentStatus = selectedTaskId ? taskStatuses[selectedTaskId] : null;
     const isPaused = currentStatus?.status === TASK_STATUS.PAUSED;
-    const currentTaskName = selectedTaskId ? (tasks.find(t => t.id === selectedTaskId)?.name || currentStatus?.name || selectedTaskId) : '';
+    const selectedTask = selectedTaskId ? tasks.find(t => t.id === selectedTaskId) : null;
+    const currentTaskName = selectedTaskId
+        ? formatTaskDisplayName(selectedTask?.name || currentStatus?.name, selectedTaskId)
+        : '';
 
     return (
         <div className="crawler-app">
@@ -447,7 +500,10 @@ const CrawlerMain = () => {
                     </button>
                 </div>
                 <ul className="task-list custom-scrollbar">
-                    {tasks.map(task => (
+                    {tasks.map(task => {
+                        const displayName = formatTaskDisplayName(task.name, task.id);
+                        const hasCustomName = Boolean(task.name && task.name !== task.id);
+                        return (
                         <li
                             key={task.id}
                             className={`task-item ${selectedTaskId === task.id ? 'active' : ''}`}
@@ -455,13 +511,14 @@ const CrawlerMain = () => {
                         >
                             <div className="task-info">
                                 <span className="task-name" title={task.name || task.id}>
-                                    {task.name || task.id.substring(0, 8)}
+                                    {hasCustomName ? displayName : task.id.substring(0, 8)}
                                 </span>
-                                <span className="task-id-sub">{task.id.substring(0, 6)}...</span>
+                                {!hasCustomName && <span className="task-id-sub">{task.id.substring(0, 6)}...</span>}
                             </div>
                             <span className={`status-dot ${(taskStatuses[task.id]?.status || 'PENDING').toLowerCase()}`}></span>
                         </li>
-                    ))}
+                        );
+                    })}
                 </ul>
             </div>
             <div className="main-content" ref={mainContentRef}>

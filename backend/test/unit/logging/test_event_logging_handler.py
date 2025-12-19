@@ -15,6 +15,7 @@ if str(backend_dir) not in sys.path:
 
 from src.shared.event_handlers.logging_handler import LoggingEventHandler
 from src.shared.domain.events import DomainEvent
+from src.shared.handlers.logging_handler import DailyRotatingFileHandler
 
 # Mock events
 @dataclass
@@ -36,11 +37,10 @@ class TestLoggingEventHandler:
         old_handlers = logger.handlers[:]
         logger.handlers = []
 
-        # Patch Path inside the module to redirect log creation to tmp_path
-        with patch('src.shared.event_handlers.logging_handler.logging.handlers.TimedRotatingFileHandler') as MockHandler:
-            # 配置 Mock 实例的 level 属性，防止 logging 模块比较时出错 (int >= Mock)
+        with patch('src.shared.event_handlers.logging_handler.DailyRotatingFileHandler') as MockHandler:
             mock_instance = MockHandler.return_value
             mock_instance.level = logging.NOTSET
+            mock_instance.setFormatter = MagicMock()
             
             handler = LoggingEventHandler(max_logs_per_task=10)
             # Manually override the task logs for a fresh start
@@ -55,11 +55,11 @@ class TestLoggingEventHandler:
         logger = logging.getLogger("src.shared.event_handlers.logging_handler")
         logger.handlers = []
         
-        with patch('src.shared.event_handlers.logging_handler.logging.handlers.TimedRotatingFileHandler') as MockHandler:
-            # 同样需要设置 level，防止如果测试中触发了日志记录导致崩溃
+        with patch('src.shared.event_handlers.logging_handler.DailyRotatingFileHandler') as MockHandler:
             mock_instance = MockHandler.return_value
             mock_instance.level = logging.NOTSET
-            
+            mock_instance.setFormatter = MagicMock()
+
             handler = LoggingEventHandler()
             assert handler._max_logs_per_task == 1000
             assert isinstance(handler._task_logs, dict)
@@ -87,9 +87,10 @@ class TestLoggingEventHandler:
 
     def test_log_storage_limit(self, handler):
         """测试日志数量限制"""
-        with patch('src.shared.event_handlers.logging_handler.logging.handlers.TimedRotatingFileHandler') as MockHandler:
+        with patch('src.shared.event_handlers.logging_handler.DailyRotatingFileHandler') as MockHandler:
             mock_instance = MockHandler.return_value
             mock_instance.level = logging.NOTSET
+            mock_instance.setFormatter = MagicMock()
             
             small_handler = LoggingEventHandler(max_logs_per_task=3)
             task_id = "task_limit"
@@ -128,19 +129,23 @@ class TestLoggingEventHandler:
         assert handler.has_errors(task_id) is True
         assert handler.has_errors("non_existent") is False
 
-    def test_custom_namer(self, handler):
+    def test_custom_namer(self, handler, tmp_path):
         """测试日志文件命名逻辑"""
         # Test case 1: Standard format
         default_name = "/path/to/logs/crawler_log.log.2025-11-30"
         
-        # Fix path separator for windows/linux consistency in test assertion
-        # We compare parts or normalized paths
-        result = handler._custom_namer(default_name)
+        file_handler = DailyRotatingFileHandler(
+            log_dir=str(tmp_path),
+            file_name_suffix="crawler_log.log",
+            use_date_prefix=False
+        )
+        result = file_handler._custom_namer(default_name)
         assert Path(result).name == "2025-11-30_crawler_log.log"
         
         # Test case 2: No date suffix
         name_no_date = "/path/to/crawler.log"
-        assert handler._custom_namer(name_no_date) == name_no_date
+        assert file_handler._custom_namer(name_no_date) == name_no_date
+        file_handler.close()
 
     def test_clear_logs(self, handler):
         task_id = "task_clear"

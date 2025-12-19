@@ -79,15 +79,21 @@ class HttpClientImpl(IHttpClient):
                 allow_redirects=True  # 自动跟随重定向
             )
             
-            # 检测编码
-            encoding = response.encoding if response.encoding else 'utf-8'
-            if not response.encoding and response.apparent_encoding:
-                encoding = response.apparent_encoding
+            # =========== 🔴 修改开始 ===========
             
-            try:
-                content = response.content.decode(encoding, errors='ignore')
-            except (UnicodeDecodeError, LookupError):
-                content = response.content.decode('utf-8', errors='ignore')
+            # 1. 修正 requests 的默认行为
+            # 如果 header 里没写编码，requests 默认是 ISO-8859-1，这在中文站几乎肯定也就是乱码
+            if response.encoding == 'ISO-8859-1':
+                response.encoding = response.apparent_encoding
+            
+            # 2. 如果 apparent_encoding 也没检测出来（罕见），兜底用 utf-8
+            if not response.encoding:
+                response.encoding = 'utf-8'
+                
+            # 3. 获取内容
+            # response.text 会自动使用上面设置好的 response.encoding 进行解码
+            # 只要 encoding 设置对，这里就不会乱码
+            content = response.text
             
             return HttpResponse(
                 url=response.url,

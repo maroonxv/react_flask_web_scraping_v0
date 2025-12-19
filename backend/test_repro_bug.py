@@ -1,88 +1,124 @@
 
 import time
-import unittest
-from threading import Thread
+import pytest
+from unittest.mock import MagicMock
+
 from src.crawl.services.crawler_service import CrawlerService
 from src.crawl.domain.value_objects.crawl_config import CrawlConfig
 from src.crawl.domain.value_objects.crawl_strategy import CrawlStrategy
 from src.crawl.domain.value_objects.crawl_status import TaskStatus
-from src.crawl.infrastructure.http_client_impl import HttpClientImpl
-from src.crawl.infrastructure.crawl_domain_service_impl import CrawlDomainServiceImpl
-from src.crawl.infrastructure.html_parser_impl import HtmlParserImpl
-from src.crawl.infrastructure.robots_txt_parser_impl import RobotsTxtParserImpl
+from src.crawl.domain.demand_interface.i_http_client import IHttpClient
+from src.crawl.domain.domain_service.i_crawl_domain_service import ICrawlDomainService
+from src.crawl.domain.value_objects.http_response import HttpResponse
+from src.crawl.domain.demand_interface.i_crawl_repository import ICrawlRepository
+from src.crawl.domain.value_objects.crawl_result import CrawlResult
 
-class MockEventBus:
-    def publish(self, event):
+
+class InMemoryCrawlRepository(ICrawlRepository):
+    def __init__(self):
+        self._tasks = {}
+        self._results = {}
+
+    def save_task(self, task):
+        self._tasks[task.id] = task
+
+    def get_task(self, task_id: str):
+        return self._tasks.get(task_id)
+
+    def get_all_tasks(self):
+        return list(self._tasks.values())
+
+    def save_result(self, task_id: str, result: CrawlResult) -> None:
+        self._results.setdefault(task_id, []).append(result)
+
+    def get_results(self, task_id: str):
+        return list(self._results.get(task_id, []))
+
+    def delete_results(self, task_id: str) -> None:
+        self._results[task_id] = []
+
+
+class MockHttpClient(IHttpClient):
+    def get(self, url: str, headers=None) -> HttpResponse:
+        return HttpResponse(
+            url=url,
+            status_code=200,
+            headers={"Content-Type": "text/html"},
+            content="<html><body>Mock</body></html>",
+            content_type="text/html",
+            is_success=True,
+            error_message=None,
+        )
+
+    def head(self, url: str) -> HttpResponse:
+        return HttpResponse(
+            url=url,
+            status_code=200,
+            headers={"Content-Type": "text/html"},
+            content="",
+            content_type="text/html",
+            is_success=True,
+            error_message=None,
+        )
+
+    def close(self):
         pass
 
-class TestPauseResume(unittest.TestCase):
-    def setUp(self):
-        self.http = HttpClientImpl()
-        self.parser = HtmlParserImpl()
-        self.robots = RobotsTxtParserImpl()
-        self.domain_service = CrawlDomainServiceImpl(self.http, self.parser, self.robots)
-        self.service = CrawlerService(self.domain_service, self.http, event_bus=MockEventBus())
 
-    def test_pause_resume(self):
-        # 1. Create task
-        config = CrawlConfig(
-            start_url="http://toscrape.com",
-            strategy=CrawlStrategy.BFS,
-            max_depth=2,
-            max_pages=10,
-            request_interval=0.5
-        )
-        task_id = self.service.create_crawl_task(config)
-        task = self.service._tasks[task_id]
+class MockCrawlDomainService(ICrawlDomainService):
+    def extract_page_metadata(self, html: str, url: str):
+        meta = MagicMock()
+        meta.title = f"Title {url}"
+        meta.author = None
+        meta.abstract = None
+        meta.keywords = []
+        meta.publish_date = None
+        return meta
 
-        # 2. Start task
-        print(f"Starting task {task_id}")
-        self.service.start_crawl_task(task_id)
-        
-        # Wait for some crawling
-        time.sleep(3)
-        
-        # Check running
-        self.assertEqual(task.status, TaskStatus.RUNNING)
-        print(f"Task status after start: {task.status}, queue size: {task.url_queue_obj.size()}")
-        
-        # 3. Pause task
-        print("Pausing task...")
-        self.service.pause_crawl_task(task_id)
-        
-        # Wait for thread to exit
-        time.sleep(2)
-        
-        # Check paused
-        self.assertEqual(task.status, TaskStatus.PAUSED)
-        print(f"Task status after pause: {task.status}, queue size: {task.url_queue_obj.size()}")
-        self.assertTrue(task_id in self.service._paused_tasks)
-        
-        # 4. Resume task
-        print("Resuming task...")
-        self.service.resume_crawl_task(task_id)
-        
-        # Wait for resume effect
-        time.sleep(1)
-        
-        # Check resumed
-        self.assertEqual(task.status, TaskStatus.RUNNING)
-        print(f"Task status after resume: {task.status}, queue size: {task.url_queue_obj.size()}")
-        self.assertFalse(task_id in self.service._paused_tasks)
-        
-        # Wait more to see if it continues
-        initial_visited = len(task.visited_urls)
-        time.sleep(3)
-        final_visited = len(task.visited_urls)
-        
-        print(f"Visited count: {initial_visited} -> {final_visited}")
-        
-        if final_visited > initial_visited:
-            print("SUCCESS: Crawler continued working.")
-        else:
-            print("FAILURE: Crawler did not process new pages.")
-            
-        self.assertTrue(final_visited >= initial_visited) # At least not stopped completely (soft check)
+    def discover_crawlable_links(self, html: str, base_url: str, task):
+        idx = len(task.visited_urls)
+        return [f"http://example.com/page/{idx + 1}"]
 
-if __name__ == "__main__":
-    unittest.main()
+    def identify_pdf_links(self, links):
+        return []
+
+
+def test_pause_resume():
+    http = MockHttpClient()
+    domain_service = MockCrawlDomainService()
+    repository = InMemoryCrawlRepository()
+
+    service = CrawlerService(domain_service, http, repository=repository, event_bus=None)
+
+    config = CrawlConfig(
+        start_url="http://example.com/page/0",
+        strategy=CrawlStrategy.BFS,
+        max_depth=100000,
+        max_pages=200,
+        request_interval=0.01,
+    )
+
+    task_id = service.create_crawl_task(config)
+    service.start_crawl_task(task_id)
+
+    time.sleep(0.05)
+    status = service.get_task_status(task_id)
+    assert status["status"] == TaskStatus.RUNNING.value
+    assert status["visited_count"] > 0
+
+    service.pause_crawl_task(task_id)
+    time.sleep(0.2)
+    status = service.get_task_status(task_id)
+    assert status["status"] == TaskStatus.PAUSED.value
+    visited_before = status["visited_count"]
+    time.sleep(1.1)
+    visited_after = service.get_task_status(task_id)["visited_count"]
+    assert visited_after == visited_before
+
+    service.resume_crawl_task(task_id)
+    time.sleep(0.2)
+    status = service.get_task_status(task_id)
+    assert status["status"] == TaskStatus.RUNNING.value
+
+    time.sleep(0.6)
+    assert service.get_task_status(task_id)["visited_count"] > visited_before
