@@ -45,7 +45,7 @@ class HttpClientImpl(IHttpClient):
             status_forcelist=[429, 500, 502, 503, 504],
             allowed_methods=["HEAD", "GET", "OPTIONS"],
             raise_on_status=False,
-            # ✅ 关键：启用连接相关异常的重试
+            # 启用连接相关异常的重试
             connect=max_retries,  # 连接失败重试次数
             read=max_retries,     # 读取超时重试次数
             redirect=5,           # 重定向次数
@@ -79,10 +79,9 @@ class HttpClientImpl(IHttpClient):
                 allow_redirects=True  # 自动跟随重定向
             )
             
-            # =========== 🔴 修改开始 ===========
+            # =========== 针对各种编码情况做的处理 ===========
             
-            # 1. 修正 requests 的默认行为
-            # 如果 header 里没写编码，requests 默认是 ISO-8859-1，这在中文站几乎肯定也就是乱码
+            # 1. 使用 apparent_encoding 自动检测编码
             if response.encoding == 'ISO-8859-1':
                 response.encoding = response.apparent_encoding
             
@@ -101,7 +100,7 @@ class HttpClientImpl(IHttpClient):
                 headers=dict(response.headers),
                 content=content,
                 content_type=response.headers.get('Content-Type', ''),
-                is_success=response.ok,  # ✅ 使用 ok 属性（200-299）
+                is_success=response.ok,
                 error_message=None if response.ok else f"HTTP {response.status_code}"
             )
             

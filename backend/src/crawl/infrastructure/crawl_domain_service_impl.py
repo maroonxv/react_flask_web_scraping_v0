@@ -12,6 +12,7 @@
 
 from typing import List, Optional
 from datetime import datetime
+from urllib.parse import urlparse
 from ..domain.domain_service.i_crawl_domain_service import ICrawlDomainService
 from ..domain.demand_interface.i_http_client import IHttpClient
 from ..domain.demand_interface.i_html_parser import IHtmlParser
@@ -97,6 +98,29 @@ class CrawlDomainServiceImpl(ICrawlDomainService):
             #    pdf_links.append(link)
         
         return pdf_links
+    
+    def get_domain_crawl_delay(self, url: str) -> Optional[float]:
+        """获取域名对应的 Crawl-delay"""
+        try:
+            parsed = urlparse(url)
+            if not parsed.scheme or not parsed.netloc:
+                return None
+
+            # 构造基础 url (scheme + netloc)
+            domain_url = f"{parsed.scheme}://{parsed.netloc}"
+            
+            # 使用 robots parser 获取延迟
+            # 这里我们假设 user_agent 是通用的，或者可以配置
+            # 目前 CrawlDomainService 没有传入 User-Agent 的上下文，暂时硬编码或使用默认
+            # 理想情况下应该从 Task 配置中获取，但接口定义限制了参数
+            # 我们可以约定一个默认 User-Agent
+            user_agent = "WebCrawler/1.0" 
+            
+            return self._robots.get_crawl_delay(domain_url, user_agent)
+        except Exception as e:
+            # 解析失败或其他错误，默认无延迟
+            print(f"Error in get_domain_crawl_delay: {e}")
+            return None
 
     def _parse_date(self, s: str) -> Optional[str]:
         """

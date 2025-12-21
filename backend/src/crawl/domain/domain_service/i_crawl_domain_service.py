@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import List
+from typing import List, Optional
 from ..value_objects.page_metadata import PageMetadata
 from ..entity.crawl_task import CrawlTask
 
@@ -42,5 +42,18 @@ class ICrawlDomainService(ABC):
         - .pdf扩展名判断
         - 通过HEAD请求检查Content-Type
         - 排除查询参数中的伪PDF链接
+        """
+        pass
+
+    @abstractmethod
+    def get_domain_crawl_delay(self, url: str) -> Optional[float]:
+        """
+        获取域名对应的 Crawl-delay
+        
+        参数:
+            url: 当前请求的 URL (用于提取域名)
+            
+        返回:
+            Crawl-delay 秒数 (float) 或 None (无限制)
         """
         pass

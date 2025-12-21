@@ -499,9 +499,23 @@ class CrawlerService:
                     queue.enqueue(link, depth=depth + 1, priority=priority)
             
             # 11. 请求间隔控制 (Rate Limiting)
-            # time.sleep(task.config.request_interval)
+            # 动态调整：遵守 robots.txt 的 Crawl-delay
+            # 注意：使用当前请求的 url 获取对应域名的延迟
+            robots_delay = self._crawl_service.get_domain_crawl_delay(url)
+            
+            # 取最大值 (谁更慢听谁的)
+            target_interval = max(
+                task.config.request_interval, 
+                robots_delay if robots_delay is not None else 0
+            )
+            
             elapsed = time.time() - loop_start_time
-            sleep_time = max(0, task.config.request_interval - elapsed)
+            sleep_time = max(0, target_interval - elapsed)
+            
+            if robots_delay and robots_delay > task.config.request_interval and sleep_time > 0:
+                # 仅在显著增加延迟时打印日志，避免刷屏
+                print(f"[RateLimit] 遵守 robots.txt 限制 ({url}), 动态调整休眠时间为: {target_interval}s")
+                
             time.sleep(sleep_time)
         
         # 12. 爬取完成或停止：根据停止标志或队列耗尽设置最终状态
