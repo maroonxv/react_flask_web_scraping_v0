@@ -494,6 +494,34 @@ const CrawlerMain = () => {
         }
     };
 
+    const handleStartUrlBlur = () => {
+        // 如果允许域名已有内容，则不覆盖，避免干扰用户
+        if (formData.allow_domains) return;
+
+        const urls = formData.start_url.split(',');
+        const domains = urls.map(u => {
+            u = u.trim();
+            if (!u) return null;
+            try {
+                // 自动补全协议以便解析
+                const urlStr = u.indexOf('://') === -1 ? `http://${u}` : u;
+                return new URL(urlStr).hostname;
+            } catch (e) {
+                return null;
+            }
+        }).filter(d => d);
+
+        // 去重
+        const uniqueDomains = [...new Set(domains)];
+
+        if (uniqueDomains.length > 0) {
+            setFormData(prev => ({
+                ...prev,
+                allow_domains: uniqueDomains.join(', ')
+            }));
+        }
+    };
+
     const handleUpdateConfig = async (taskId) => {
         try {
             await axios.post(`${API_BASE_URL}/config/${taskId}`, editConfig);
@@ -605,13 +633,14 @@ const CrawlerMain = () => {
                                 </div>
                             </div>
                             <div className="form-group full-width">
-                                <label>起始URL</label>
+                                <label>起始URL (支持多个，逗号分隔)</label>
                                 <input
                                     type="text"
                                     value={formData.start_url}
                                     onChange={e => setFormData({ ...formData, start_url: e.target.value })}
+                                    onBlur={handleStartUrlBlur}
                                     required
-                                    placeholder="https://example.com"
+                                    placeholder="https://example.com, https://another.com"
                                 />
                             </div>
                             <div className="form-group full-width">

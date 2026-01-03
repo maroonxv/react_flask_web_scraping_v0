@@ -49,5 +49,8 @@ class CrawlConfig:
         if self.allow_domains:
             self.allow_domains = clean_domains(self.allow_domains)
             
+        if self.priority_domains:
+            self.priority_domains = clean_domains(self.priority_domains)
+            
         if self.blacklist:
             self.blacklist = clean_domains(self.blacklist)

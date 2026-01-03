@@ -44,9 +44,15 @@ class PlaywrightClient:
                 page = context.new_page()
                 
                 # 访问页面
-                # wait_until='networkidle' 表示等待网络空闲（通常意味着JS加载完成）
-                # timeout 设置为 30s
-                page.goto(url, wait_until="networkidle", timeout=30000)
+                # 使用 domcontentloaded 而非 networkidle，避免因后台持续轮询导致超时
+                page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                
+                # 额外等待一小段时间确保动态内容开始渲染
+                try:
+                    page.wait_for_load_state("networkidle", timeout=5000)
+                except Exception:
+                    # 如果5秒内没有网络空闲，忽略并继续（说明页面可能有持续后台请求）
+                    pass
                 
                 # 如果指定了等待元素
                 if wait_for_selector:

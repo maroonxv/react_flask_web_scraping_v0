@@ -32,8 +32,13 @@ class UrlQueueImpl(IUrlQueue):
         # 清空所有队列
         self.clear()
         
-        # 添加起始URL(深度为0)
-        self.enqueue(start_url, depth=0, priority=100)
+        # 处理多个起始URL (支持逗号分隔)
+        # 兼容处理：如果是单个URL，split(',') 也会返回包含一个元素的列表
+        urls = [url.strip() for url in start_url.split(',') if url.strip()]
+        
+        for url in urls:
+            # 添加起始URL(深度为0, 优先级最高)
+            self.enqueue(url, depth=0, priority=100)
     
     def enqueue(self, url: str, depth: int, priority: int = 0) -> None:
         """添加URL到队列"""
