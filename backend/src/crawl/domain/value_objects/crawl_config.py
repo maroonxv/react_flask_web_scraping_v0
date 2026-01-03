@@ -9,17 +9,22 @@ class CrawlConfig:
     max_depth: int = 3
     max_pages: int = 100
     request_interval: float = 1.0  # 这个参数控制请求间隔，实现爬取速率控制
+    enable_dynamic_scoring: bool = True # 是否启用动态大站优先评分策略
     allow_domains: List[str] = field(default_factory=list)
     priority_domains: List[str] = field(default_factory=list)
+    blacklist: List[str] = field(default_factory=list)
 
     def __post_init__(self):
         """
         数据清洗与验证
         """
-        if self.allow_domains:
-            from urllib.parse import urlparse
+        from urllib.parse import urlparse
+        
+        def clean_domains(domains: List[str]) -> List[str]:
             cleaned = []
-            for domain in self.allow_domains:
+            if not domains:
+                return cleaned
+            for domain in domains:
                 if not domain:
                     continue
                 domain = domain.strip()
@@ -39,5 +44,10 @@ class CrawlConfig:
                     cleaned.append(domain.split('/')[0])
                 else:
                     cleaned.append(domain)
+            return cleaned
+
+        if self.allow_domains:
+            self.allow_domains = clean_domains(self.allow_domains)
             
-            self.allow_domains = cleaned
+        if self.blacklist:
+            self.blacklist = clean_domains(self.blacklist)

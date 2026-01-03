@@ -168,9 +168,16 @@ class CrawlTask:
 
     def is_url_allowed(self, url: str) -> bool:
         """验证URL是否符合允许的域名规则"""
+        parsed_url = urlparse(url)
+        
+        # 1. 黑名单检查 (优先级最高)
+        if self.config.blacklist:
+            if any(domain in parsed_url.netloc for domain in self.config.blacklist):
+                return False
+
+        # 2. 白名单检查
         if not self.config.allow_domains:
             return True
-        parsed_url = urlparse(url)
         return any(domain in parsed_url.netloc for domain in self.config.allow_domains)
 
     def mark_url_visited(self, url: str):

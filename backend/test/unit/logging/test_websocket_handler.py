@@ -58,7 +58,7 @@ class TestWebSocketLoggingHandler:
         
         assert event_name == 'tech_log'
         assert kwargs['namespace'] == '/test_ns'
-        assert kwargs['broadcast'] is True
+        # assert kwargs['broadcast'] is True # Removed as implementation does not use broadcast=True
         
         # 验证日志内容结构
         assert log_data['level'] == 'ERROR'
@@ -111,6 +111,24 @@ class TestWebSocketLoggingHandler:
         assert log_data['extra']['user_id'] == 123
         assert log_data['extra']['context'] == "test_context"
         assert '_private' not in log_data['extra']
+
+    def test_task_id_extraction(self, handler, mock_socketio):
+        """测试 task_id 提取逻辑"""
+        record = logging.LogRecord(
+            name="test", level=logging.INFO, pathname="t", lineno=1, msg="msg", args=(), exc_info=None
+        )
+        record.task_id = "task_123"
+        record.other_extra = "keep_me"
+        
+        handler.emit(record)
+        log_data = mock_socketio.emit.call_args[0][1]
+        
+        # task_id 应该在最外层
+        assert log_data['task_id'] == "task_123"
+        # task_id 不应该在 extra 中
+        assert 'task_id' not in log_data['extra']
+        # 其他 extra 应该保留
+        assert log_data['extra']['other_extra'] == "keep_me"
 
     def test_unserializable_extra_data(self, handler, mock_socketio):
         """测试不可序列化的 extra 数据处理"""

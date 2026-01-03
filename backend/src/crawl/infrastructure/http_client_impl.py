@@ -1,10 +1,15 @@
 import requests
+import time
+import logging
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from typing import Optional
 from ..domain.demand_interface.i_http_client import IHttpClient
 from ..domain.value_objects.http_response import HttpResponse
 
+# 获取 logger
+error_logger = logging.getLogger('infrastructure.error')
+perf_logger = logging.getLogger('infrastructure.perf')
 
 class HttpClientImpl(IHttpClient):
     """基于requests库的HTTP客户端实现"""
@@ -55,17 +60,19 @@ class HttpClientImpl(IHttpClient):
         self._session.mount("http://", adapter)
         self._session.mount("https://", adapter)
     
-    def get(self, url: str, headers: Optional[dict] = None) -> HttpResponse:
+    def get(self, url: str, headers: Optional[dict] = None, render_js: bool = False) -> HttpResponse:
         """
         执行HTTP GET请求
         
         参数:
             url: 目标URL
             headers: 自定义请求头(可选)
+            render_js: 是否使用动态渲染 (HttpClientImpl不支持此功能，若为True将忽略或仅执行静态请求)
             
         返回:
             HttpResponse对象，包含响应信息或错误信息
         """
+        start_time = time.time()
         try:
             # 合并会话头和自定义头
             request_headers = None
@@ -79,6 +86,18 @@ class HttpClientImpl(IHttpClient):
                 allow_redirects=True  # 自动跟随重定向
             )
             
+            # 计算耗时 (ms)
+            elapsed_ms = (time.time() - start_time) * 1000
+            
+            # 记录性能日志
+            perf_logger.info(f"HTTP GET {url} - {response.status_code} - {elapsed_ms:.2f}ms", extra={
+                'url': url,
+                'method': 'GET',
+                'status_code': response.status_code,
+                'elapsed_ms': elapsed_ms,
+                'component': 'HttpClientImpl'
+            })
+
             # =========== 针对各种编码情况做的处理 ===========
             
             # 1. 使用 apparent_encoding 自动检测编码
@@ -105,34 +124,34 @@ class HttpClientImpl(IHttpClient):
             )
             
         except requests.exceptions.Timeout:
-            return self._create_error_response(
-                url, "请求超时", f"请求超过{self._timeout}秒未响应"
-            )
+            error_msg = f"请求超过{self._timeout}秒未响应"
+            error_logger.error(f"HTTP Timeout: {url} - {error_msg}", extra={'url': url, 'error_type': 'Timeout'})
+            return self._create_error_response(url, "请求超时", error_msg)
         
         except requests.exceptions.ConnectionError as e:
-            return self._create_error_response(
-                url, "连接失败", f"无法连接到服务器: {str(e)}"
-            )
+            error_msg = f"无法连接到服务器: {str(e)}"
+            error_logger.error(f"HTTP ConnectionError: {url} - {error_msg}", extra={'url': url, 'error_type': 'ConnectionError'})
+            return self._create_error_response(url, "连接失败", error_msg)
         
         except requests.exceptions.TooManyRedirects:
-            return self._create_error_response(
-                url, "重定向过多", "重定向次数超过限制"
-            )
+            error_msg = "重定向次数超过限制"
+            error_logger.error(f"HTTP TooManyRedirects: {url}", extra={'url': url, 'error_type': 'TooManyRedirects'})
+            return self._create_error_response(url, "重定向过多", error_msg)
         
         except requests.exceptions.HTTPError as e:  # ✅ 添加 HTTPError 专门处理
-            return self._create_error_response(
-                url, "HTTP错误", f"HTTP错误: {str(e)}"
-            )
+            error_msg = f"HTTP错误: {str(e)}"
+            error_logger.error(f"HTTP HTTPError: {url} - {error_msg}", extra={'url': url, 'error_type': 'HTTPError'})
+            return self._create_error_response(url, "HTTP错误", error_msg)
 
         except requests.exceptions.RequestException as e:
-            return self._create_error_response(
-                url, "请求异常", f"请求失败: {str(e)}"
-            )
+            error_msg = f"请求失败: {str(e)}"
+            error_logger.error(f"HTTP RequestException: {url} - {error_msg}", extra={'url': url, 'error_type': 'RequestException'})
+            return self._create_error_response(url, "请求异常", error_msg)
         
         except Exception as e:
-            return self._create_error_response(
-                url, "未知错误", f"未预期的错误: {type(e).__name__} - {str(e)}"
-            )
+            error_msg = f"未预期的错误: {type(e).__name__} - {str(e)}"
+            error_logger.error(f"HTTP Unhandled Exception: {url} - {error_msg}", exc_info=True, extra={'url': url, 'error_type': 'Unhandled'})
+            return self._create_error_response(url, "未知错误", error_msg)
     
     def head(self, url: str) -> HttpResponse:
         """

@@ -16,6 +16,8 @@ import pandas as pd
 from io import BytesIO
 from ..services.crawler_service import CrawlerService  # 应用层：负责任务编排、异步调度、状态查询
 from ..infrastructure.http_client_impl import HttpClientImpl  # 基础设施：requests 封装的 HTTP 客户端
+from ..infrastructure.playwright_client import PlaywrightClient
+from ..infrastructure.hybrid_http_client import HybridHttpClient
 from ..infrastructure.html_parser_impl import HtmlParserImpl  # 基础设施：BeautifulSoup 封装的 HTML 解析器
 from ..infrastructure.robots_txt_parser_impl import RobotsTxtParserImpl  # 基础设施：robots.txt 解析与遵守
 from ..infrastructure.url_queue_impl import UrlQueueImpl  # 基础设施：URL 队列，支持 BFS/DFS/优先级
@@ -46,7 +48,9 @@ def health():
 init_db()
 
 # 2. 创建基础设施与服务
-_http = HttpClientImpl()
+_static_http = HttpClientImpl()
+_pw_client = PlaywrightClient()
+_http = HybridHttpClient(_static_http, _pw_client)
 _parser = HtmlParserImpl()
 _robots = RobotsTxtParserImpl()
 _domain_service = CrawlDomainServiceImpl(_http, _parser, _robots)
@@ -83,21 +87,33 @@ def init_realtime_logging(socketio, event_bus):
     event_bus.subscribe_to_all(ws_event_handler.handle)
     
     # 3. 配置技术日志推送 (Logger -> WebSocket)
-    # 获取技术日志 Logger
+    # 分开配置：
+    # - infrastructure.* -> tech_log (默认)
+    # - domain.crawl_process -> crawl_log (业务过程)
+    
+    # 3.1 技术日志
+    tech_handler = WebSocketLoggingHandler(socketio, event_name='tech_log')
+    tech_handler.setFormatter(logging.Formatter('%(message)s'))
+    
     tech_loggers = [
         logging.getLogger('infrastructure.error'),
         logging.getLogger('infrastructure.perf')
     ]
-    
-    # 创建 handler
-    ws_log_handler = WebSocketLoggingHandler(socketio)
-    # 设置简单格式，具体字段由 handler 内部处理
-    ws_log_handler.setFormatter(logging.Formatter('%(message)s'))
-    
     for logger in tech_loggers:
-        # 避免重复添加 (如果 run.py 或 logging_config 已经添加过)
-        if not any(isinstance(h, WebSocketLoggingHandler) for h in logger.handlers):
-            logger.addHandler(ws_log_handler)
+        if not any(isinstance(h, WebSocketLoggingHandler) and h._event_name == 'tech_log' for h in logger.handlers):
+            logger.addHandler(tech_handler)
+            
+    # 3.2 业务过程日志 (ScoreManager, Hybrid, etc.)
+    process_handler = WebSocketLoggingHandler(socketio, event_name='crawl_log')
+    process_handler.setFormatter(logging.Formatter('%(message)s'))
+    
+    process_loggers = [
+        logging.getLogger('domain.crawl_process'),
+        logging.getLogger('domain.task_lifecycle')
+    ]
+    for logger in process_loggers:
+        if not any(isinstance(h, WebSocketLoggingHandler) and h._event_name == 'crawl_log' for h in logger.handlers):
+            logger.addHandler(process_handler)
 
 @bp.route("/logs/test_broadcast", methods=["POST"])
 def test_broadcast_log():
@@ -163,6 +179,7 @@ def create():
     interval = float(data.get("interval", 1.0))
     allow_domains = data.get("allow_domains", [])
     priority_domains = data.get("priority_domains", [])
+    blacklist = data.get("blacklist", [])
     name = data.get("name")  # Extract name
 
     if not start_url:
@@ -177,6 +194,7 @@ def create():
             request_interval=interval,
             allow_domains=allow_domains,
             priority_domains=priority_domains,
+            blacklist=blacklist
         )
         
         task_id = _service.create_crawl_task(config, name=name)

@@ -157,20 +157,33 @@ def _add_websocket_handlers(socketio: SocketIO):
     """
     动态添加 WebSocket 处理器到技术日志 Logger
     """
-    # 创建 WebSocket 处理器
-    ws_handler = WebSocketLoggingHandler(socketio)
-    ws_handler.setFormatter(logging.Formatter('%(message)s')) # 简单格式，具体格式由 handler 内部处理
+    # 1. 创建技术日志处理器 (使用默认 event_name='tech_log')
+    tech_ws_handler = WebSocketLoggingHandler(socketio)
+    tech_ws_handler.setFormatter(logging.Formatter('%(message)s'))
+    
+    # 2. 创建业务日志处理器 (使用 event_name='crawl_log')
+    business_ws_handler = WebSocketLoggingHandler(socketio, event_name='crawl_log')
+    business_ws_handler.setFormatter(logging.Formatter('%(message)s'))
     
     # 获取目标 logger
     error_logger = logging.getLogger('infrastructure.error')
     perf_logger = logging.getLogger('infrastructure.perf')
+    lifecycle_logger = logging.getLogger('domain.task_lifecycle')
+    process_logger = logging.getLogger('domain.crawl_process')
     
-    # 添加处理器
-    if not any(isinstance(h, WebSocketLoggingHandler) for h in error_logger.handlers):
-        error_logger.addHandler(ws_handler)
+    # 添加处理器 (技术日志)
+    if not any(isinstance(h, WebSocketLoggingHandler) and h._event_name == 'tech_log' for h in error_logger.handlers):
+        error_logger.addHandler(tech_ws_handler)
         
-    if not any(isinstance(h, WebSocketLoggingHandler) for h in perf_logger.handlers):
-        perf_logger.addHandler(ws_handler)
+    if not any(isinstance(h, WebSocketLoggingHandler) and h._event_name == 'tech_log' for h in perf_logger.handlers):
+        perf_logger.addHandler(tech_ws_handler)
+
+    # 添加处理器 (业务日志)
+    if not any(isinstance(h, WebSocketLoggingHandler) and h._event_name == 'crawl_log' for h in lifecycle_logger.handlers):
+        lifecycle_logger.addHandler(business_ws_handler)
+
+    if not any(isinstance(h, WebSocketLoggingHandler) and h._event_name == 'crawl_log' for h in process_logger.handlers):
+        process_logger.addHandler(business_ws_handler)
     
     # 记录调试信息
-    logging.getLogger('root').info("WebSocket日志处理器已附加到 error 和 perf 通道")
+    logging.getLogger('root').info("WebSocket日志处理器已附加到 all 通道 (tech_log & crawl_log)")

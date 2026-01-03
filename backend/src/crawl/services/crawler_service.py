@@ -29,8 +29,12 @@ from ..domain.value_objects.crawl_status import TaskStatus
 from ..domain.value_objects.crawl_strategy import CrawlStrategy
 from ..domain.value_objects.crawl_result import CrawlResult
 from ..domain.value_objects.crawl_config import CrawlConfig
+from ..domain.domain_service.domain_score_manager import DomainScoreManager
 from src.shared.event_bus import EventBus
+import logging
 
+# 获取业务逻辑 logger
+logger = logging.getLogger('domain.crawl_process')
 
 from ..infrastructure.url_queue_impl import UrlQueueImpl
 
@@ -75,6 +79,8 @@ class CrawlerService:
         self._stopped_tasks: set[str] = set()
         # 记录每个任务的工作线程
         self._threads: Dict[str, Thread] = {}
+        # 记录每个任务的域名评分管理器
+        self._score_managers: Dict[str, DomainScoreManager] = {}
 
     def get_all_tasks(self) -> List[CrawlTask]:
         """获取所有任务（从数据库）"""
@@ -160,6 +166,21 @@ class CrawlerService:
         
         # 发布状态变更事件
         self._publish_domain_events(task)
+
+        # 2.5 初始化动态评分管理器 (如果尚未存在)
+        # 修改：仅在大站优先策略下启用 ScoreManager
+        if task.config.strategy.value == "BIG_SITE_FIRST":
+            if task_id not in self._score_managers:
+                self._score_managers[task_id] = DomainScoreManager(
+                    task_id=task_id,
+                    whitelist=task.config.priority_domains,
+                    blacklist=[] 
+                )
+        else:
+            # 如果不是大站优先策略（如 BFS/DFS），确保不启用 ScoreManager
+            # 清理可能存在的旧实例（防止逻辑污染）
+            if task_id in self._score_managers:
+                del self._score_managers[task_id]
 
         # 3. 初始化队列(仅在首次启动时)
         queue = task.url_queue_obj
@@ -396,8 +417,52 @@ class CrawlerService:
             # 提前标记为已访问，表明正在处理或已处理，防止重复入队
             task.mark_url_visited(url)
             
-            response = self._http.get(url)
+            # 默认使用静态方式获取
+            response = self._http.get(url, render_js=False)
+            
+            # [混合解析模式] 启发式检测：检查是否需要动态渲染
+            if response.is_success:
+                need_dynamic = False
+                
+                # 规则1: 内容过短 (小于100字符，可能是极简空壳或错误页)
+                if len(response.content) < 100:
+                    need_dynamic = True
+                
+                # 规则2: 特征检测 (常见 SPA 挂载点)
+                elif '<div id="app"></div>' in response.content or \
+                     '<div id="root"></div>' in response.content or \
+                     '<div id="__next"></div>' in response.content:
+                     need_dynamic = True
+                
+                # 规则3: 脚本密度检测 (通用逻辑)
+                # 如果页面包含脚本，但移除标签后的纯文本内容极少，极有可能是 JS 渲染页面
+                elif '<script' in response.content:
+                    try:
+                        # 简单的纯文本提取估算 (为了性能不使用完整 DOM 解析)
+                        # 移除 script 标签内的内容和标签本身
+                        # 这里做一个极其粗略的估算：body 长度 vs 脚本数量
+                        # 如果 body 长度不短，但全是 script 标签，text density 低
+                        
+                        # 更好且高效的方法：统计 script 标签出现的次数，以及页面总长度
+                        # 如果页面很短 (<2000 字符) 且包含多个 script，或者 script 占比极高
+                        if len(response.content) < 2000:
+                             # 简单粗暴：如果这么短还带 script，多半是空壳
+                             need_dynamic = True
+                    except:
+                        pass
+
+                if need_dynamic:
+                    logger.info(f"[Hybrid] 检测到动态页面特征，尝试切换至浏览器渲染: {url}", extra={'task_id': task.id})
+                    # 使用动态方式重试获取
+                    # 注意：这将启动 Playwright 浏览器，耗时较长
+                    response = self._http.get(url, render_js=True)
+
             if not response.is_success:
+                # [动态评分] 失败反馈
+                score_manager = self._score_managers.get(task.id)
+                if score_manager and task.config.enable_dynamic_scoring:
+                     score_manager.update_score(url, "ERROR_4XX_5XX")
+
                 task.record_crawl_error(url, f"请求失败: {response.error_message}", "RequestFailed")
                 self._publish_domain_events(task)
                 continue
@@ -428,17 +493,30 @@ class CrawlerService:
                 self._publish_domain_events(task)
                 pdf_links = []
             
-            # 8. 更新聚合根状态：记录已访问URL (已提前移动到请求前)
-            # task.mark_url_visited(url)
-            
+            # [动态评分策略] 收集反馈 (针对当前 URL)
+            score_manager = self._score_managers.get(task.id)
+            if score_manager and task.config.enable_dynamic_scoring:
+                # 1. 响应速度反馈 (估算，包含处理时间)
+                elapsed_req = time.time() - loop_start_time
+                if elapsed_req < 0.5: 
+                    score_manager.update_score(url, "FAST_RESPONSE")
+                
+                # 2. 内容质量反馈
+                if len(metadata.abstract or "") > 200:
+                    score_manager.update_score(url, "HIGH_QUALITY_CONTENT")
+                
+                # 3. 资源发现反馈
+                if len(pdf_links) > 0:
+                    score_manager.update_score(url, "RESOURCE_FOUND")
+
             # 9. 创建并追加爬取结果：供外部查询显示
             tags = []
             if task.config.strategy.value == "BIG_SITE_FIRST":
                  for domain in task.config.priority_domains:
                       if domain in url:
                            tags.append("big_site")
-                           # 可视化反馈：控制台日志
-                           print(f"[BIG_SITE] ⭐ 正在处理优先站点: {url}")
+                           # 可视化反馈
+                           logger.info(f"[BIG_SITE] ⭐ 正在处理优先站点: {url}", extra={'task_id': task.id})
                            break
 
             result = CrawlResult(
@@ -468,33 +546,36 @@ class CrawlerService:
             # 发布积压的事件（如PageCrawledEvent）
             self._publish_domain_events(task)
 
-            # 供crawler_view调用：查询一次最新结果
-            # latest_results = self.get_task_results(task.id)
-            
             # 10. 将新发现的链接加入队列(深度+1)：可调整优先级策略
             is_big_site_mode = task.config.strategy.value == "BIG_SITE_FIRST"
             
             for link in crawlable_links:
                 if not task.is_url_visited(link):
-                    # 计算优先级
                     priority = 0
                     
-                    # 基础优先级规则
-                    if link.lower().endswith('.pdf'):
-                        priority += 5  # 小站PDF
+                    if score_manager and task.config.enable_dynamic_scoring:
+                         # [新逻辑] 动态评分优先级
+                         base_priority = 5 if link.lower().endswith('.pdf') else 1
+                         domain_weight = score_manager.get_score(link)
+                         # 放大倍数，保留小数影响
+                         priority = int(base_priority * domain_weight * 10)
                     else:
-                        priority += 1  # 普通页面
-                    
-                    # 大站优先策略
-                    if is_big_site_mode:
-                        is_priority_domain = False
-                        for domain in task.config.priority_domains:
-                            if domain in link:
-                                is_priority_domain = True
-                                break
+                        # [旧逻辑] 基础优先级 + 简单大站策略
+                        if link.lower().endswith('.pdf'):
+                            priority += 5  # 小站PDF
+                        else:
+                            priority += 1  # 普通页面
                         
-                        if is_priority_domain:
-                            priority += 100 # 大站 > 小站PDF(5)
+                        # 大站优先策略
+                        if is_big_site_mode:
+                            is_priority_domain = False
+                            for domain in task.config.priority_domains:
+                                if domain in link:
+                                    is_priority_domain = True
+                                    break
+                            
+                            if is_priority_domain:
+                                priority += 100 # 大站 > 小站PDF(5)
                     
                     queue.enqueue(link, depth=depth + 1, priority=priority)
             
@@ -514,7 +595,7 @@ class CrawlerService:
             
             if robots_delay and robots_delay > task.config.request_interval and sleep_time > 0:
                 # 仅在显著增加延迟时打印日志，避免刷屏
-                print(f"[RateLimit] 遵守 robots.txt 限制 ({url}), 动态调整休眠时间为: {target_interval}s")
+                logger.info(f"[RateLimit] 遵守 robots.txt 限制 ({url}), 动态调整休眠时间为: {target_interval}s", extra={'task_id': task.id})
                 
             time.sleep(sleep_time)
         

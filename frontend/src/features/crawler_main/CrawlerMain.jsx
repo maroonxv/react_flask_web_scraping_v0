@@ -48,17 +48,23 @@ const LogViewer = ({ taskId, logs }) => {
                 ref={logContainerRef}
                 onScroll={updatePinnedState}
             >
-                {logs.length === 0 ? <p className="no-data">等待日志...</p> : logs.map((log, index) => (
-                    <div key={index} className={`log-entry ${log.level?.toLowerCase()} ${log.category}`}>
-                        <span className="log-time">{log.timestamp}</span>
-                        <span className="log-level">[{log.level}]</span>
-                        <span className="log-category">[{log.category || 'general'}]</span>
-                        <span className="log-message">{log.message}</span>
-                        {log.extra && Object.keys(log.extra).length > 0 && (
-                            <span className="log-extra">{JSON.stringify(log.extra)}</span>
-                        )}
-                    </div>
-                ))}
+                {logs.length === 0 ? <p className="no-data">等待日志...</p> : logs.map((log, index) => {
+                    const isHybrid = log.message?.includes('[Hybrid]');
+                    const isScore = log.message?.includes('[ScoreManager]');
+                    const specialClass = isHybrid ? 'log-hybrid' : (isScore ? 'log-score' : '');
+                    
+                    return (
+                        <div key={index} className={`log-entry ${log.level?.toLowerCase()} ${log.category} ${specialClass}`}>
+                            <span className="log-time">{log.timestamp}</span>
+                            <span className="log-level">[{log.level}]</span>
+                            <span className="log-category">[{log.category || 'general'}]</span>
+                            <span className="log-message">{log.message}</span>
+                            {log.extra && Object.keys(log.extra).length > 0 && (
+                                <span className="log-extra">{JSON.stringify(log.extra)}</span>
+                            )}
+                        </div>
+                    );
+                })}
                 <div ref={logEndRef} />
             </div>
         </div>
@@ -202,7 +208,8 @@ const CrawlerMain = () => {
         max_pages: 5,
         interval: 0.2,
         allow_domains: '',
-        priority_domains: '' // Added priority_domains
+        priority_domains: '', // Added priority_domains
+        blacklist: ''
     });
 
     // 暂停时的配置编辑状态
@@ -241,15 +248,27 @@ const CrawlerMain = () => {
 
         socketRef.current.on('crawl_log', (data) => {
             // 业务日志 (room=taskId)
-            const { task_id, event_type, data: eventData } = data;
-            if (task_id) {
+            // 兼容两种格式：
+            // 1. Domain Event: { task_id, event_type, data: {...} }
+            // 2. Log Record: { message, category, extra: { task_id }, ... }
+            
+            let taskId = data.task_id;
+            const eventType = data.event_type;
+
+            // 如果是 Log Record 格式 (来自 WebSocketLoggingHandler)
+            if (!taskId && data.extra && data.extra.task_id) {
+                taskId = data.extra.task_id;
+            }
+
+            if (taskId) {
                 setLogs(prev => ({
                     ...prev,
-                    [task_id]: [...(prev[task_id] || []), data]
+                    [taskId]: [...(prev[taskId] || []), data]
                 }));
 
-                // Real-time result update
-                if (event_type === 'PageCrawledEvent' || event_type === 'PAGE_CRAWLED') {
+                // Real-time result update (仅针对 Domain Event)
+                if (eventType === 'PageCrawledEvent' || eventType === 'PAGE_CRAWLED') {
+                    const eventData = data.data || {};
                     const newResult = {
                         title: eventData.title,
                         url: eventData.url,
@@ -263,14 +282,14 @@ const CrawlerMain = () => {
                     };
                     
                     setResults(prev => {
-                        const currentResults = prev[task_id] || [];
+                        const currentResults = prev[taskId] || [];
                         // Check for duplicates based on URL to avoid list growing indefinitely with same items if re-emitted
                         if (currentResults.some(r => r.url === newResult.url)) {
                              return prev;
                         }
                         return {
                             ...prev,
-                            [task_id]: [...currentResults, newResult]
+                            [taskId]: [...currentResults, newResult]
                         };
                     });
                 }
@@ -278,10 +297,18 @@ const CrawlerMain = () => {
         });
 
         socketRef.current.on('tech_log', (data) => {
-            if (runningTaskId) {
+            // 技术日志 (可能包含 task_id 也可能不包含)
+            let targetTaskId = runningTaskId;
+            
+            // 尝试从 extra 中获取 task_id
+            if (data.extra && data.extra.task_id) {
+                targetTaskId = data.extra.task_id;
+            }
+
+            if (targetTaskId) {
                 setLogs(prev => ({
                     ...prev,
-                    [runningTaskId]: [...(prev[runningTaskId] || []), { ...data, category: 'tech_log' }]
+                    [targetTaskId]: [...(prev[targetTaskId] || []), { ...data, category: 'tech_log' }]
                 }));
             }
         });
@@ -386,7 +413,8 @@ const CrawlerMain = () => {
             const payload = {
                 ...formData,
                 allow_domains: formData.allow_domains.split(',').map(d => d.trim()).filter(d => d),
-                priority_domains: formData.priority_domains.split(',').map(d => d.trim()).filter(d => d)
+                priority_domains: formData.priority_domains.split(',').map(d => d.trim()).filter(d => d),
+                blacklist: formData.blacklist.split(',').map(d => d.trim()).filter(d => d)
             };
 
             const res = await axios.post(`${API_BASE_URL}/create`, payload);
@@ -412,7 +440,8 @@ const CrawlerMain = () => {
                 max_pages: 5,
                 interval: 0.2,
                 allow_domains: '',
-                priority_domains: ''
+                priority_domains: '',
+                blacklist: ''
             });
 
             // alert(`Task Created: ${newTaskId}`); // Removed alert for smoother UX
@@ -535,16 +564,6 @@ const CrawlerMain = () => {
                                     placeholder="例如:技术博客爬取"
                                 />
                             </div>
-                            <div className="form-group full-width">
-                                <label>起始URL</label>
-                                <input
-                                    type="text"
-                                    value={formData.start_url}
-                                    onChange={e => setFormData({ ...formData, start_url: e.target.value })}
-                                    required
-                                    placeholder="https://example.com"
-                                />
-                            </div>
                             <div className="form-row">
                                 <div className="form-group">
                                     <label>策略</label>
@@ -566,22 +585,6 @@ const CrawlerMain = () => {
                                     />
                                 </div>
                             </div>
-
-                            {formData.strategy === 'BIG_SITE_FIRST' && (
-                                <div className="form-group full-width priority-domains-alert">
-                                    <label>⭐ 大站域名设置 (逗号分隔)</label>
-                                    <input
-                                        type="text"
-                                        value={formData.priority_domains}
-                                        onChange={e => setFormData({ ...formData, priority_domains: e.target.value })}
-                                        placeholder="例如: books.toscrape.com, quotes.toscrape.com"
-                                    />
-                                    <small>
-                                        输入的大站域名将获得最高优先级，其下的页面会优先被爬取。
-                                    </small>
-                                </div>
-                            )}
-
                             <div className="form-row">
                                 <div className="form-group">
                                     <label>最大页数</label>
@@ -602,6 +605,16 @@ const CrawlerMain = () => {
                                 </div>
                             </div>
                             <div className="form-group full-width">
+                                <label>起始URL</label>
+                                <input
+                                    type="text"
+                                    value={formData.start_url}
+                                    onChange={e => setFormData({ ...formData, start_url: e.target.value })}
+                                    required
+                                    placeholder="https://example.com"
+                                />
+                            </div>
+                            <div className="form-group full-width">
                                 <label>允许的域名 (逗号分隔)</label>
                                 <input
                                     type="text"
@@ -610,6 +623,29 @@ const CrawlerMain = () => {
                                     placeholder="example.com, google.com"
                                 />
                             </div>
+                            
+                            {formData.strategy === 'BIG_SITE_FIRST' && (
+                                <>
+                                    <div className="form-group full-width">
+                                        <label>大站域名设置 (逗号分隔)</label>
+                                        <input
+                                            type="text"
+                                            value={formData.priority_domains}
+                                            onChange={e => setFormData({ ...formData, priority_domains: e.target.value })}
+                                            placeholder="例如: books.toscrape.com, quotes.toscrape.com"
+                                        />
+                                    </div>
+                                    <div className="form-group full-width">
+                                        <label>黑名单域名 (逗号分隔)</label>
+                                        <input
+                                            type="text"
+                                            value={formData.blacklist}
+                                            onChange={e => setFormData({ ...formData, blacklist: e.target.value })}
+                                            placeholder="forbidden.com, ads.google.com"
+                                        />
+                                    </div>
+                                </>
+                            )}
 
                             <button type="submit" className="submit-btn">
                                 <i className="fas fa-rocket"></i> 启动爬虫

@@ -19,17 +19,19 @@ class WebSocketLoggingHandler(logging.Handler):
         logger.addHandler(handler)
     """
     
-    def __init__(self, socketio: SocketIO, namespace: str = '/crawl'):
+    def __init__(self, socketio: SocketIO, namespace: str = '/crawl', event_name: str = 'tech_log'):
         """
         初始化WebSocket日志处理器
         
         参数:
             socketio: Flask-SocketIO实例
             namespace: WebSocket命名空间
+            event_name: 发送的WebSocket事件名 (默认 'tech_log')
         """
         super().__init__()
         self._socketio = socketio
         self._namespace = namespace
+        self._event_name = event_name
         self._internal_logger = logging.getLogger('internal.websocket_logging_handler')
     
     def emit(self, record: logging.LogRecord) -> None:
@@ -44,11 +46,12 @@ class WebSocketLoggingHandler(logging.Handler):
             log_message = self._format_log_record(record)
             
             # 通过WebSocket广播到所有连接的客户端
+            # 注意：在 Flask-SocketIO 中，服务器端 emit 默认就是广播给 namespace 下所有客户端
+            # 不需要也不能传递 broadcast=True，否则会导致底层 TypeError
             self._socketio.emit(
-                'tech_log',              # 技术日志事件名（区别于业务日志的 'crawl_log'）
+                self._event_name,        # 使用配置的事件名
                 log_message,
-                namespace=self._namespace,
-                broadcast=True           # 广播给所有客户端
+                namespace=self._namespace
             )
             
         except Exception as e:
@@ -83,6 +86,13 @@ class WebSocketLoggingHandler(logging.Handler):
         }
         log_category = category_map.get(raw_category, raw_category)
         
+        # 1. 提取 extra 数据
+        extra_data = self._extract_extra_data(record)
+        
+        # 2. 将 task_id 从 extra 中取出来（如果存在），并从 extra 中删除
+        # 这样 task_id 可以作为顶级字段供前端过滤，但不会显示在 extra 详情中
+        task_id = extra_data.pop('task_id', None)
+        
         # 构建前端消息
         log_message = {
             # 基础信息
@@ -97,8 +107,11 @@ class WebSocketLoggingHandler(logging.Handler):
             'function': record.funcName,
             'line': record.lineno,
             
-            # 扩展信息（从 extra 参数）
-            'extra': self._extract_extra_data(record),
+            # 任务ID（如果存在）- 放在最外层
+            'task_id': task_id,
+            
+            # 扩展信息（已移除 task_id）
+            'extra': extra_data,
             
             # 异常信息（如果有）
             'exception': self._format_exception(record) if record.exc_info else None

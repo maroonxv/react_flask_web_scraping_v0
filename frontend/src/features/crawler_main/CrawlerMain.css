@@ -405,6 +405,26 @@ body {
 .log-entry.error .log-level { color: var(--color-danger); }
 .log-entry.warning .log-level { color: #F59E0B; }
 
+/* Category specific colors */
+.log-entry.tech_log .log-category { color: var(--color-indigo); }
+.log-entry.crawl_process .log-category { color: var(--color-teal); }
+.log-entry.task_lifecycle .log-category { color: #818cf8; }
+
+/* Special message highlighting */
+.log-entry.log-hybrid .log-message {
+    color: #fbbf24; /* Amber 400 */
+    font-weight: 600;
+}
+
+.log-entry.log-score .log-message {
+    color: #34d399; /* Emerald 400 */
+    font-weight: 600;
+}
+
+/* Note: CSS doesn't support :contains or :has-text for text nodes natively in all browsers without JS, 
+   but we can use a simpler approach or target via React if needed. 
+   For now, let's just add category colors which help. */
+
 .log-message {
     color: var(--text-primary);
 }
@@ -445,6 +465,10 @@ body {
     flex-direction: column;
     overflow: hidden;
     height: 100%;
+}
+
+.result-viewer a {
+    color: #699bf8;
 }
 
 .table-container {
@@ -570,38 +594,7 @@ input:focus, select:focus {
     box-shadow: 0 8px 25px rgba(99, 102, 241, 0.5);
 }
 
-.priority-domains-alert {
-    margin-top: 10px;
-    margin-bottom: 10px;
-    background: rgba(245, 158, 11, 0.1); /* Amber/Gold tint */
-    padding: 16px;
-    border-radius: 12px;
-    border: 1px solid rgba(245, 158, 11, 0.3);
-}
 
-.priority-domains-alert label {
-    color: #F59E0B; /* Amber 500 */
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-weight: 700;
-}
-
-.priority-domains-alert input {
-    border-color: rgba(245, 158, 11, 0.5);
-    background: rgba(0, 0, 0, 0.2);
-}
-
-.priority-domains-alert input:focus {
-    border-color: #F59E0B;
-    box-shadow: 0 0 10px rgba(245, 158, 11, 0.3);
-}
-
-.priority-domains-alert small {
-    color: var(--text-secondary);
-    margin-top: 8px;
-    display: block;
-}
 
 /* --- Dashboard Specifics --- */
 .header-left {

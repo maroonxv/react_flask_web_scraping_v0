@@ -34,6 +34,24 @@ CrawlFlow 爬虫平台支持多种遍历策略（BFS/DFS/大站优先），内�
 | **Domain** | 核心业务逻辑，纯净的业务规则 | `entity`, `value_objects`, `domain_event`, `domain_service` |
 | **Infrastructure** | 基础设施层，技术实现细节 | `http_client`, `html_parser`, `database_repository` |
 
+#### 关键技术实现细节
+
+**1. 日志记录与实时监控**
+
+*   **业务状态流转**：
+    业务层面的状态变化（如“任务开始”、“爬取到一个页面”、“任务完成”）被建模为**领域事件 (Domain Events)**。这些事件发布到进程内的事件总线后，由订阅者 `WebSocketEventHandler` 捕获，并通过 WebSocket 实时推送到前端界面。这种设计使得前端无需轮询即可实时展示爬取进度和结果。
+
+*   **技术日志 (Logging + WebSocket)**：
+    基础设施层产生的异常（如“DNS 解析失败”、“连接超时”）和性能指标，通过 Python 标准库 `logging` 记录。为了在前端显示，实现了一个自定义的 `WebSocketLoggingHandler`，它拦截 **ERROR** 级别的日志记录，将其格式化后推送到前端的日志控制台，方便用户监控系统健康状况。
+
+**2. 数据持久化策略**
+
+数据持久化层采用了 **Repository 模式** 结合 **DAO** 的设计：
+
+1.  **ORM 映射**：使用 **SQLAlchemy** 将领域实体 `CrawlTask` 和值对象 `CrawlResult` 映射为关系型数据库表。
+2.  **CrawlRepository**：作为领域层与数据层的适配器，负责实现领域层的领域模型与数据库中的持久化模型进行相互转换，向应用层提供纯净的面向对象接口，屏蔽底层数据库细节。
+3.  **事务管理 (Unit of Work)**：在保存数据时，采用 Unit of Work 思想，确保“保存爬取结果”和“更新任务状态（如已访问 URL 集合）”在同一个数据库事务中完成，保证了数据的一致性。如果中途发生异常，事务会自动回滚，避免数据损坏。
+
 ### 前端架构 (React.js + Vite)
 
 采用组件化开发，通过 `Socket.io` 与后端保持实时双向通信，状态管理清晰，界面响应迅速。
