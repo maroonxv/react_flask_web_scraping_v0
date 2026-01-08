@@ -21,6 +21,7 @@ from typing import Dict, List, Optional
 from threading import Thread
 import time  # 引入 time 模块
 from ..domain.domain_service.i_crawl_domain_service import ICrawlDomainService
+from ..domain.domain_service.i_pdf_domain_service import IPdfDomainService
 from ..domain.demand_interface.i_http_client import IHttpClient
 from ..domain.demand_interface.i_url_queue import IUrlQueue
 from ..domain.demand_interface.i_crawl_repository import ICrawlRepository
@@ -29,6 +30,7 @@ from ..domain.value_objects.crawl_status import TaskStatus
 from ..domain.value_objects.crawl_strategy import CrawlStrategy
 from ..domain.value_objects.crawl_result import CrawlResult
 from ..domain.value_objects.crawl_config import CrawlConfig
+from ..domain.value_objects.pdf_crawl_result import PdfCrawlResult
 from ..domain.domain_service.domain_score_manager import DomainScoreManager
 from src.shared.event_bus import EventBus
 import logging
@@ -53,7 +55,8 @@ class CrawlerService:
         crawl_domain_service: ICrawlDomainService,
         http_client: IHttpClient,
         repository: ICrawlRepository,
-        event_bus: Optional[EventBus] = None
+        event_bus: Optional[EventBus] = None,
+        pdf_domain_service: Optional[IPdfDomainService] = None
     ):
         """
         构造函数注入依赖
@@ -63,12 +66,14 @@ class CrawlerService:
             http_client: HTTP客户端
             repository: 爬取任务仓储
             event_bus: 事件总线 (可选，便于测试)
+            pdf_domain_service: PDF领域服务 (可选，用于PDF内容提取)
         """
         # 依赖注入：保存领域服务、HTTP客户端与URL队列引用
         self._crawl_service = crawl_domain_service
         self._http = http_client
         self._repository = repository
         self._event_bus = event_bus
+        self._pdf_service = pdf_domain_service
         
         # 内存缓存：仅存储活跃（Running/Paused）或最近访问的任务
         # 为了简化，我们仍然可以用它来hold住对象引用，以便 queue_obj 不被回收
@@ -81,6 +86,8 @@ class CrawlerService:
         self._threads: Dict[str, Thread] = {}
         # 记录每个任务的域名评分管理器
         self._score_managers: Dict[str, DomainScoreManager] = {}
+        # PDF 爬取结果存储 (按任务ID分组)
+        self._pdf_results: Dict[str, List[PdfCrawlResult]] = {}
 
     def get_all_tasks(self) -> List[CrawlTask]:
         """获取所有任务（从数据库）"""
@@ -315,6 +322,28 @@ class CrawlerService:
         # 所以我们需要调用 repository.get_results
         return self._repository.get_results(task_id)
 
+    def get_pdf_results(self, task_id: str) -> List[PdfCrawlResult]:
+        """
+        获取任务的 PDF 爬取结果列表
+        
+        参数:
+            task_id: 任务ID
+            
+        返回:
+            该任务的所有 PDF 爬取结果列表
+        """
+        return self._repository.get_pdf_results(task_id)
+
+    def _store_pdf_result(self, task_id: str, result: PdfCrawlResult) -> None:
+        """
+        存储 PDF 爬取结果
+        
+        参数:
+            task_id: 任务ID
+            result: PDF 爬取结果
+        """
+        self._repository.save_pdf_result(task_id, result)
+
 
     def get_task_status(self, task_id: str) -> dict:
         """
@@ -412,6 +441,48 @@ class CrawlerService:
                 task.record_crawl_error(url, "URL不在允许的域名列表中", "DomainNotAllowed")
                 self._publish_domain_events(task)
                 continue
+
+            # [PDF 专用通道] 检查是否为 PDF URL (拦截并处理)
+            if self._pdf_service and url.lower().endswith('.pdf'):
+                task.mark_url_visited(url)
+                try:
+                    logger.info(f"[PDF] 开始处理 PDF 任务: {url}", extra={'task_id': task.id})
+                    pdf_result = self._pdf_service.process_pdf_url(url, depth=depth)
+                    
+                    # 1. 保存 PDF 专用结果
+                    self._store_pdf_result(task.id, pdf_result)
+                    
+                    # 2. 映射并保存通用 CrawlResult (供前端主列表显示)
+                    if pdf_result.is_success and pdf_result.pdf_content:
+                        # 生成摘要
+                        abstract = pdf_result.pdf_content.text_content[:300] + "..." if pdf_result.pdf_content.text_content else ""
+                        
+                        crawl_result = CrawlResult(
+                            url=url,
+                            title=pdf_result.pdf_content.metadata.title or "PDF Document",
+                            author=pdf_result.pdf_content.metadata.author,
+                            abstract=abstract,
+                            keywords=[], 
+                            publish_date=pdf_result.pdf_content.metadata.creation_date,
+                            pdf_links=[url], # 标记自己
+                            tags=["pdf"],
+                            depth=depth,
+                            crawled_at=datetime.now()
+                        )
+                        
+                        task.add_crawl_result(crawl_result, depth)
+                        self._repository.save_result(task.id, crawl_result)
+                        logger.info(f"[PDF] PDF 处理完成并保存: {url}", extra={'task_id': task.id})
+                    else:
+                         task.record_crawl_error(url, pdf_result.error_message or "PDF 处理失败", "PdfProcessingFailed")
+
+                except Exception as e:
+                    logger.error(f"[PDF] PDF 处理异常: {str(e)}", extra={'task_id': task.id})
+                    task.record_crawl_error(url, str(e), "PdfProcessingException")
+                
+                self._publish_domain_events(task)
+                time.sleep(task.config.request_interval)
+                continue
             
             # 4. 执行HTTP请求：包含重试/编码检测/错误处理
             # 提前标记为已访问，表明正在处理或已处理，防止重复入队
@@ -492,6 +563,9 @@ class CrawlerService:
                 task.record_crawl_error(url, f"PDF识别失败: {str(e)}", "PdfIdentificationFailed")
                 self._publish_domain_events(task)
                 pdf_links = []
+            
+            # 8. (已移除) PDF 内容提取逻辑已移至循环顶部，通过队列统一调度
+            # if self._pdf_service and pdf_links: ...
             
             # [动态评分策略] 收集反馈 (针对当前 URL)
             score_manager = self._score_managers.get(task.id)

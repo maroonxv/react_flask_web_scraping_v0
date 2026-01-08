@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import List, Optional
-from .models import CrawlTaskModel, CrawlResultModel
+from .models import CrawlTaskModel, CrawlResultModel, PdfResultModel
 
 class ICrawlDao(ABC):
     """
@@ -40,4 +40,14 @@ class ICrawlDao(ABC):
     @abstractmethod
     def delete_results_by_task_id(self, task_id: str) -> None:
         """Delete all results for a specific task (e.g. on restart)"""
+        pass
+
+    @abstractmethod
+    def add_pdf_result(self, result: PdfResultModel) -> None:
+        """Add a PDF crawl result"""
+        pass
+
+    @abstractmethod
+    def get_pdf_results_by_task_id(self, task_id: str) -> List[PdfResultModel]:
+        """Get all PDF results for a specific task"""
         pass

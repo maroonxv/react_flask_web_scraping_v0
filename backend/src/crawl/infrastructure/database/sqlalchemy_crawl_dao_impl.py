@@ -1,7 +1,7 @@
 from typing import List, Optional
 from sqlalchemy.orm import Session
 from src.shared.db_manager import db_session
-from .models import CrawlTaskModel, CrawlResultModel
+from .models import CrawlTaskModel, CrawlResultModel, PdfResultModel
 from .i_crawl_dao import ICrawlDao
 
 class SqlAlchemyCrawlDaoImpl(ICrawlDao):
@@ -53,7 +53,19 @@ class SqlAlchemyCrawlDaoImpl(ICrawlDao):
     def delete_results_by_task_id(self, task_id: str) -> None:
         try:
             self._session.query(CrawlResultModel).filter(CrawlResultModel.task_id == task_id).delete()
+            self._session.query(PdfResultModel).filter(PdfResultModel.task_id == task_id).delete()
             self._session.commit()
         except Exception as e:
             self._session.rollback()
             raise e
+
+    def add_pdf_result(self, result: PdfResultModel) -> None:
+        try:
+            self._session.add(result)
+            self._session.commit()
+        except Exception as e:
+            self._session.rollback()
+            raise e
+
+    def get_pdf_results_by_task_id(self, task_id: str) -> List[PdfResultModel]:
+        return self._session.query(PdfResultModel).filter(PdfResultModel.task_id == task_id).all()

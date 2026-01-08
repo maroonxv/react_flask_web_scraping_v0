@@ -2,6 +2,7 @@ from sqlalchemy import Column, String, Integer, Float, DateTime, Text, ForeignKe
 from sqlalchemy.orm import relationship
 from src.shared.db_manager import Base
 from datetime import datetime
+from sqlalchemy.dialects.mysql import LONGTEXT
 
 class CrawlTaskModel(Base):
     __tablename__ = "crawl_tasks"
@@ -25,6 +26,7 @@ class CrawlTaskModel(Base):
 
     # Relationship
     results = relationship("CrawlResultModel", back_populates="task", cascade="all, delete-orphan")
+    pdf_results = relationship("PdfResultModel", back_populates="task", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<CrawlTaskModel(id={self.id}, status={self.status})>"
@@ -51,3 +53,31 @@ class CrawlResultModel(Base):
 
     def __repr__(self):
         return f"<CrawlResultModel(id={self.id}, url={self.url})>"
+
+class PdfResultModel(Base):
+    __tablename__ = "pdf_results"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    task_id = Column(String(36), ForeignKey("crawl_tasks.id"), nullable=False, index=True)
+    
+    url = Column(Text, nullable=False)
+    is_success = Column(Integer, default=1) # 1 for success, 0 for fail
+    error_message = Column(Text, nullable=True)
+    
+    # Content
+    content_text = Column(LONGTEXT, nullable=True)
+    
+    # Metadata
+    meta_title = Column(Text, nullable=True)
+    meta_author = Column(Text, nullable=True)
+    page_count = Column(Integer, default=0)
+    creation_date = Column(DateTime, nullable=True)
+    
+    depth = Column(Integer, default=0)
+    crawled_at = Column(DateTime, default=datetime.now)
+
+    # Relationship
+    task = relationship("CrawlTaskModel", back_populates="pdf_results")
+
+    def __repr__(self):
+        return f"<PdfResultModel(id={self.id}, url={self.url}, success={self.is_success})>"

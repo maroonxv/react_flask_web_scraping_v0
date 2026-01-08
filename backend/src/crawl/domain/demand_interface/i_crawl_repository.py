@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 from typing import List, Optional
 from ..entity.crawl_task import CrawlTask
 from ..value_objects.crawl_result import CrawlResult
+from ..value_objects.pdf_crawl_result import PdfCrawlResult
 
 class ICrawlRepository(ABC):
     """
@@ -37,4 +38,14 @@ class ICrawlRepository(ABC):
     @abstractmethod
     def delete_results(self, task_id: str) -> None:
         """删除任务的所有结果 (用于重试/清理)"""
+        pass
+
+    @abstractmethod
+    def save_pdf_result(self, task_id: str, result: PdfCrawlResult) -> None:
+        """保存单条 PDF 爬取结果"""
+        pass
+
+    @abstractmethod
+    def get_pdf_results(self, task_id: str) -> List[PdfCrawlResult]:
+        """获取任务的所有 PDF 爬取结果"""
         pass

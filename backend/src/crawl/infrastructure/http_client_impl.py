@@ -83,7 +83,8 @@ class HttpClientImpl(IHttpClient):
                 url,
                 headers=request_headers,
                 timeout=self._timeout,
-                allow_redirects=True  # 自动跟随重定向
+                allow_redirects=True,  # 自动跟随重定向
+                verify=False  # 忽略 SSL 验证
             )
             
             # 计算耗时 (ms)
@@ -167,7 +168,8 @@ class HttpClientImpl(IHttpClient):
             response = self._session.head(
                 url,
                 timeout=self._timeout,
-                allow_redirects=True
+                allow_redirects=True,
+                verify=False  # 忽略 SSL 验证
             )
             
             return HttpResponse(

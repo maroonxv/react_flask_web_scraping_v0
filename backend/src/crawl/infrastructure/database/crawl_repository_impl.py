@@ -3,11 +3,14 @@ import json
 from ...domain.demand_interface.i_crawl_repository import ICrawlRepository
 from ...domain.entity.crawl_task import CrawlTask
 from ...domain.value_objects.crawl_result import CrawlResult
+from ...domain.value_objects.pdf_crawl_result import PdfCrawlResult
+from ...domain.value_objects.pdf_content import PdfContent
+from ...domain.value_objects.pdf_metadata import PdfMetadata
 from ...domain.value_objects.crawl_config import CrawlConfig
 from ...domain.value_objects.crawl_status import TaskStatus
 from ...domain.value_objects.crawl_strategy import CrawlStrategy
 from .i_crawl_dao import ICrawlDao
-from .models import CrawlTaskModel, CrawlResultModel
+from .models import CrawlTaskModel, CrawlResultModel, PdfResultModel
 
 class CrawlRepositoryImpl(ICrawlRepository):
     """
@@ -51,6 +54,14 @@ class CrawlRepositoryImpl(ICrawlRepository):
 
     def delete_results(self, task_id: str) -> None:
         self._dao.delete_results_by_task_id(task_id)
+
+    def save_pdf_result(self, task_id: str, result: PdfCrawlResult) -> None:
+        model = self._to_pdf_result_model(task_id, result)
+        self._dao.add_pdf_result(model)
+
+    def get_pdf_results(self, task_id: str) -> List[PdfCrawlResult]:
+        models = self._dao.get_pdf_results_by_task_id(task_id)
+        return [self._to_pdf_result_entity(m) for m in models]
 
     # ------------------ 映射方法 ------------------
 
@@ -124,4 +135,50 @@ class CrawlRepositoryImpl(ICrawlRepository):
             tags=model.tags if model.tags else [],
             depth=model.depth,
             crawled_at=model.crawled_at
+        )
+
+    def _to_pdf_result_model(self, task_id: str, result: PdfCrawlResult) -> PdfResultModel:
+        model = PdfResultModel(
+            task_id=task_id,
+            url=result.url,
+            is_success=1 if result.is_success else 0,
+            error_message=result.error_message,
+            depth=result.depth,
+            crawled_at=result.crawled_at
+        )
+        
+        if result.pdf_content:
+            model.content_text = result.pdf_content.text_content
+            if result.pdf_content.metadata:
+                model.meta_title = result.pdf_content.metadata.title
+                model.meta_author = result.pdf_content.metadata.author
+                model.page_count = result.pdf_content.metadata.page_count
+                model.creation_date = result.pdf_content.metadata.creation_date
+                
+        return model
+
+    def _to_pdf_result_entity(self, model: PdfResultModel) -> PdfCrawlResult:
+        content = None
+        if model.is_success:
+            metadata = PdfMetadata(
+                title=model.meta_title,
+                author=model.meta_author,
+                page_count=model.page_count,
+                creation_date=model.creation_date,
+                modification_date=None, # DB model simplified, can add if needed
+                creator=None
+            )
+            content = PdfContent(
+                source_url=model.url,
+                text_content=model.content_text,
+                page_texts=(), # Large data, maybe skip loading for summary list
+                metadata=metadata
+            )
+            
+        return PdfCrawlResult(
+            url=model.url,
+            pdf_content=content,
+            crawled_at=model.crawled_at,
+            depth=model.depth,
+            error_message=model.error_message
         )

@@ -55,13 +55,22 @@ _parser = HtmlParserImpl()
 _robots = RobotsTxtParserImpl()
 _domain_service = CrawlDomainServiceImpl(_http, _parser, _robots)
 
+from ..infrastructure.binary_http_client_impl import BinaryHttpClientImpl
+from ..infrastructure.pdf_content_extractor_impl import PdfContentExtractorImpl
+from ..infrastructure.pdf_domain_service_impl import PdfDomainServiceImpl
+
 # 3. 创建持久化层
 _dao = SqlAlchemyCrawlDaoImpl() # 使用默认 scoped_session
 _repository = CrawlRepositoryImpl(_dao)
 
+# PDF 服务组装
+_binary_http = BinaryHttpClientImpl()
+_pdf_extractor = PdfContentExtractorImpl()
+_pdf_service = PdfDomainServiceImpl(_binary_http, _pdf_extractor)
+
 # 4. 创建应用服务
 # 重构：UrlQueue 不再单例注入，而是由 Task 内部管理
-_service = CrawlerService(_domain_service, _http, _repository)
+_service = CrawlerService(_domain_service, _http, _repository, pdf_domain_service=_pdf_service)
 
 def inject_event_bus(event_bus):
     """依赖注入：注入事件总线"""
@@ -348,6 +357,28 @@ def results(task_id: str):
                 "pdf_count": len(r.pdf_links),
                 "tags": r.tags
             } 
+            for r in results
+        ])
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+@bp.route("/results/pdf/<task_id>", methods=["GET"])
+def pdf_results(task_id: str):
+    """查询任务的 PDF 爬取结果列表"""
+    try:
+        results = _service.get_pdf_results(task_id)
+        return jsonify([
+            {
+                "url": r.url,
+                "is_success": r.is_success,
+                "error_message": r.error_message,
+                "title": r.pdf_content.metadata.title if r.is_success and r.pdf_content and r.pdf_content.metadata else None,
+                "author": r.pdf_content.metadata.author if r.is_success and r.pdf_content and r.pdf_content.metadata else None,
+                "page_count": r.pdf_content.metadata.page_count if r.is_success and r.pdf_content and r.pdf_content.metadata else 0,
+                "content_preview": r.pdf_content.text_content[:200] + "..." if r.is_success and r.pdf_content and r.pdf_content.text_content else None,
+                "depth": r.depth,
+                "crawled_at": r.crawled_at.isoformat() if r.crawled_at else None
+            }
             for r in results
         ])
     except Exception as e:
